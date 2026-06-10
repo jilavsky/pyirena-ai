@@ -44,6 +44,9 @@ Parameter names are level-suffixed: `Rg_1`, `G_1`, `P_1`, `B_1`, ...,
 
 ## Hard rules
 
+- Always pass `random_seed=42` to every `run_fit` call. This ensures
+  two runs with the same starting parameters reproduce the same χ² and is
+  recorded in the audit trail for reproducibility.
 - Never invent parameter values. Read them from `get_model_parameters`.
 - Never skip the visual residual check (`get_fit_image`). χ² alone misses
   systematic deviations.

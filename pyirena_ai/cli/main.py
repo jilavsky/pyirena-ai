@@ -3,6 +3,7 @@
 Subcommands:
 
   fit FILE         run the agent on one NXcanSAS file
+  gui              launch the Gradio fitting GUI
   providers        show configured providers and their endpoints
   set-key NAME     prompt for an API key and store it in the OS keyring
   strategies       list available fitting strategies
@@ -88,6 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_strat = sub.add_parser("strategies", help="List available fitting strategies.")
     p_strat.set_defaults(func=cmd_strategies)
 
+    # ---- gui ---------------------------------------------------------
+    p_gui = sub.add_parser("gui", help="Launch the Gradio fitting GUI.")
+    p_gui.add_argument("--host", default="127.0.0.1",
+                       help="Interface to bind (default: 127.0.0.1).")
+    p_gui.add_argument("--port", type=int, default=7860,
+                       help="Port to listen on (default: 7860).")
+    p_gui.add_argument("--share", action="store_true",
+                       help="Create a public Gradio share link (requires internet).")
+    p_gui.set_defaults(func=cmd_gui)
+
     return p
 
 
@@ -133,6 +144,21 @@ def cmd_strategies(args: argparse.Namespace) -> int:
     print("Available strategies:")
     for n in names:
         print(f"  - {n}")
+    return 0
+
+
+def cmd_gui(args: argparse.Namespace) -> int:
+    try:
+        from pyirena_ai.gui.app import launch  # noqa: PLC0415
+    except ImportError as e:
+        print(
+            f"error: {e}\n"
+            "Install the GUI extra: pip install \"pyirena-ai[gui]\"",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"Starting Gradio GUI at http://{args.host}:{args.port} …")
+    launch(host=args.host, port=args.port, share=args.share)
     return 0
 
 

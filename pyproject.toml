@@ -48,6 +48,10 @@ openai = [
 keyring = [
     "keyring>=24.0",
 ]
+gui = [
+    "gradio>=4.44",
+    "Pillow>=10.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
@@ -58,6 +62,7 @@ all = [
     "pyirena-ai[anthropic]",
     "pyirena-ai[openai]",
     "pyirena-ai[keyring]",
+    "pyirena-ai[gui]",
 ]
 
 [project.urls]

@@ -24,9 +24,11 @@ from pyirena.api import control as _ctrl
 from pyirena.api.control.schemas import TOOL_SCHEMAS, TOOL_SCHEMA_BY_NAME
 
 PYIRENA_VERSION: str = pyirena.__version__
+CONTROL_API_VERSION: str = _ctrl.__version__
 
 TOOL_FUNCS: dict[str, Callable[..., dict]] = {
     name: getattr(_ctrl, name) for name in _ctrl.__all__
+    if callable(getattr(_ctrl, name, None))
 }
 
 __all__ = [
@@ -34,6 +36,7 @@ __all__ = [
     "TOOL_SCHEMA_BY_NAME",
     "TOOL_FUNCS",
     "PYIRENA_VERSION",
+    "CONTROL_API_VERSION",
     "dispatch",
     "is_image_result",
     "extract_image_base64",

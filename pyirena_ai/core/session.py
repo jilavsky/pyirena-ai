@@ -46,6 +46,7 @@ class RunSession:
     final_chi_squared: float | None = None
     saved_to:          str = ""
     cost_usd_estimate: float | None = None
+    last_random_seed:  int | None = None
 
     # Track which session_id we last saw open_dataset return, so the CLI
     # can look up chi-squared and decide save path without re-parsing turns.

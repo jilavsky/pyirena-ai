@@ -129,6 +129,10 @@ class Agent:
             rcs = result.get("reduced_chi_squared")
             if isinstance(rcs, (int, float)):
                 self.session.final_chi_squared = float(rcs)
+        if tc.name == "run_fit" and isinstance(result, dict):
+            seed = result.get("random_seed")
+            if seed is not None:
+                self.session.last_random_seed = int(seed)
 
         return _tool_result_block(tc.id, result)
 

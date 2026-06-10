@@ -19,7 +19,7 @@ from typing import Any
 
 from pyirena_ai import __version__ as PYIRENA_AI_VERSION
 from pyirena_ai.core.session import RunSession
-from pyirena_ai.core.tools import PYIRENA_VERSION, is_image_result
+from pyirena_ai.core.tools import CONTROL_API_VERSION, PYIRENA_VERSION, is_image_result
 
 AUDIT_SCHEMA = "pyirena-ai/audit/v1"
 
@@ -48,13 +48,16 @@ def _to_dict(session: RunSession) -> dict[str, Any]:
         d = asdict(t)
         if t.type == "tool_use" and is_image_result(t.result):
             d["result"] = _redact_image_result(t.result)
+        if t.type == "tool_use" and t.tool == "run_fit":
+            d["random_seed"] = t.result.get("random_seed")
         turns.append(d)
 
     return {
-        "schema":           AUDIT_SCHEMA,
-        "pyirena_ai":       PYIRENA_AI_VERSION,
-        "pyirena":          PYIRENA_VERSION,
-        "started_at":       session.started_at,
+        "schema":               AUDIT_SCHEMA,
+        "pyirena_ai":           PYIRENA_AI_VERSION,
+        "pyirena":              PYIRENA_VERSION,
+        "control_api_version":  CONTROL_API_VERSION,
+        "started_at":           session.started_at,
         "finished_at":      session.finished_at,
         "input_file":       session.input_file,
         "provider":         session.provider,
