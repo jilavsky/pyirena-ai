@@ -1,0 +1,29 @@
+name: pyirena-ai
+
+# Conda installs Python + the core HTTP/SDK stack only.
+# pip (via the `-e ".[all]"` line below) installs pyirena-ai itself plus
+# pyirena (which in turn pulls numpy/scipy/h5py), and the optional LLM SDKs.
+#
+# Python is capped <3.14 because Python 3.14 is still bleeding edge for
+# many scientific binding wheels. Bump the cap once the ecosystem catches up.
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python>=3.10,<3.14
+
+  # HTTP client (used by openai_compat provider)
+  - httpx>=0.27
+
+  # Development / testing
+  - pytest>=7.0
+  - pytest-cov
+
+  - pip
+  - pip:
+      # Installs pyirena-ai in editable mode and pulls pyirena (which brings
+      # numpy/scipy/h5py through its own dependency graph), httpx, the LLM
+      # SDKs, and the keyring backend.
+      - -e ".[all]"

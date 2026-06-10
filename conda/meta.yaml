@@ -1,0 +1,61 @@
+{% set name = "pyirena-ai" %}
+{% set version = "0.0.1" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://github.com/jilavsky/{{ name }}/archive/v{{ version }}.tar.gz
+  sha256: {{ sha256 }}
+
+build:
+  number: 0
+  noarch: python
+  script: {{ PYTHON }} -m pip install . -vv
+  entry_points:
+    - pyirena-ai = pyirena_ai.cli.main:main
+
+requirements:
+  host:
+    - python >=3.10
+    - pip
+    - setuptools >=61.0
+    - wheel
+  run:
+    - python >=3.10
+    - pyirena >=0.8.2
+    - httpx >=0.27
+    # LLM SDKs and keyring stay pip-only (move too fast for conda-forge
+    # cadence). Users who want a specific provider install the matching
+    # extra via pip after the conda install:
+    #   pip install "pyirena-ai[anthropic]"
+
+test:
+  imports:
+    - pyirena_ai
+    - pyirena_ai.core
+    - pyirena_ai.llm
+  commands:
+    - pip check
+    - pyirena-ai --help
+  requires:
+    - pip
+
+about:
+  home: https://github.com/jilavsky/pyirena-ai
+  license: MIT
+  license_family: MIT
+  license_file: LICENSE
+  summary: AI-driven SAXS/USAXS fitting on top of pyirena.
+  description: |
+    pyirena-ai is a standalone application that lets a large language model
+    autonomously fit small-angle X-ray scattering datasets using the
+    analysis tools provided by pyirena. Phase 1 wraps the Unified Fit
+    (Beaucage) model and ships a headless command-line agent.
+  doc_url: https://github.com/jilavsky/pyirena-ai
+  dev_url: https://github.com/jilavsky/pyirena-ai
+
+extra:
+  recipe-maintainers:
+    - jilavsky

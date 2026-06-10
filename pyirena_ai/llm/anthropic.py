@@ -1,0 +1,83 @@
+"""Anthropic provider (uses the official `anthropic` SDK).
+
+`anthropic` is an optional dependency — install with `pip install
+"pyirena-ai[anthropic]"`. The SDK is imported lazily inside `send_with_tools`
+so the rest of the package keeps working when it is not installed.
+
+Tool schemas from `pyirena.api.control.schemas.TOOL_SCHEMAS` are already
+shaped for the Anthropic API and are passed through unchanged.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pyirena_ai.llm.base import (
+    AssistantResponse,
+    LLMProvider,
+    ToolCall,
+    Usage,
+)
+
+
+class AnthropicProvider(LLMProvider):
+    name = "anthropic"
+
+    def send_with_tools(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict],
+        max_tokens: int = 4096,
+    ) -> AssistantResponse:
+        try:
+            import anthropic  # noqa: PLC0415
+        except ImportError as e:
+            raise RuntimeError(
+                "The 'anthropic' package is not installed. "
+                "Install with: pip install \"pyirena-ai[anthropic]\""
+            ) from e
+
+        client_kwargs: dict[str, Any] = {"api_key": self.api_key, "timeout": self.timeout}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        client = anthropic.Anthropic(**client_kwargs)
+
+        response = client.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            system=system,
+            tools=tools,
+            messages=messages,
+        )
+
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        raw_content: list[dict] = []
+
+        for block in response.content:
+            block_dict = block.model_dump() if hasattr(block, "model_dump") else dict(block)
+            raw_content.append(block_dict)
+            btype = block_dict.get("type")
+            if btype == "text":
+                text_parts.append(block_dict.get("text", ""))
+            elif btype == "tool_use":
+                tool_calls.append(
+                    ToolCall(
+                        id=block_dict.get("id", ""),
+                        name=block_dict.get("name", ""),
+                        args=block_dict.get("input", {}) or {},
+                    )
+                )
+
+        return AssistantResponse(
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            stop_reason=response.stop_reason or "",
+            usage=Usage(
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+            ),
+            raw_content=raw_content,
+        )

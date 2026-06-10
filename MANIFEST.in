@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+include pyproject.toml
+recursive-include pyirena_ai *.md
+recursive-include pyirena_ai/config/strategies *.md
+global-exclude __pycache__
+global-exclude *.py[cod]
