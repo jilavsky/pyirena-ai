@@ -31,6 +31,7 @@ from pyirena_ai.config.settings import (
 from pyirena_ai.core.agent import Agent
 from pyirena_ai.core.audit import default_audit_path, write_audit_json
 from pyirena_ai.core.session import RunSession
+from pyirena_ai.core.skills import build_system_prompt
 from pyirena_ai.core.strategy import list_strategies, load_strategy
 from pyirena_ai.core.tools import dispatch
 from pyirena_ai.llm.pricing import estimate_cost_usd
@@ -72,6 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Max tokens per LLM turn.")
     p_fit.add_argument("--max-iterations", type=int, default=50,
                        help="Hard cap on tool-use round-trips.")
+    p_fit.add_argument("--context", default="",
+                       help="One-shot context for this fit (sample description, "
+                            "expected structure, etc.). Appended to the system prompt.")
     p_fit.add_argument("--verbose", "-v", action="store_true",
                        help="Stream agent progress to stderr.")
     p_fit.set_defaults(func=cmd_fit)
@@ -189,10 +193,16 @@ def cmd_fit(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        system_prompt = load_strategy(args.strategy)
+        strategy_text = load_strategy(args.strategy)
     except KeyError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+
+    system_prompt = build_system_prompt(
+        strategy_text,
+        tool_name="unified_fit",
+        extra_context=args.context,
+    )
 
     progress = (lambda msg: print(msg, file=sys.stderr)) if args.verbose else None
 

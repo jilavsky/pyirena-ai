@@ -31,6 +31,7 @@ from pyirena_ai.config.settings import load_settings
 from pyirena_ai.core.agent import Agent
 from pyirena_ai.core.audit import default_audit_path, write_audit_json
 from pyirena_ai.core.session import RunSession
+from pyirena_ai.core.skills import build_system_prompt
 from pyirena_ai.core.strategy import load_strategy
 from pyirena_ai.core.tools import dispatch, is_image_result
 from pyirena_ai.gui.formatting import params_to_markdown, token_line, tool_event_line
@@ -94,6 +95,7 @@ class GradioRunner:
         model_id: str,
         base_url: str,
         strategy: str,
+        user_context: str,
         state: UIState,
     ) -> None:
         """Runs in a background thread. Mutates `state` and puts copies on the queue."""
@@ -118,13 +120,19 @@ class GradioRunner:
                 base_url=base_url,
             )
 
-            # ---- load strategy -------------------------------------------
+            # ---- load strategy + skills + user instructions ---------------
             try:
-                system_prompt = load_strategy(strategy)
+                strategy_text = load_strategy(strategy)
             except KeyError as e:
                 state.log.append({"role": "assistant", "content": f"⚠ {e}"})
                 push("error: strategy not found")
                 return
+
+            system_prompt = build_system_prompt(
+                strategy_text,
+                tool_name="unified_fit",
+                extra_context=user_context,
+            )
 
             self._session = RunSession(
                 input_file=file_path,
@@ -263,6 +271,7 @@ class GradioRunner:
         model_id: str,
         base_url: str,
         strategy: str,
+        user_context: str = "",
     ) -> Generator[tuple, None, None]:
         """Start the background thread and yield UIState tuples until done."""
         self._stop.clear()
@@ -270,7 +279,8 @@ class GradioRunner:
 
         t = threading.Thread(
             target=self._run,
-            args=(file_path, provider_name, model_id, base_url, strategy, state),
+            args=(file_path, provider_name, model_id, base_url, strategy,
+                  user_context, state),
             daemon=True,
         )
         t.start()

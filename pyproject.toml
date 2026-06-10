@@ -80,7 +80,7 @@ pyirena-ai = "pyirena_ai.cli.main:main"
 include = ["pyirena_ai*"]
 
 [tool.setuptools.package-data]
-pyirena_ai = ["config/strategies/*.md"]
+pyirena_ai = ["config/strategies/*.md", "config/skills/*.md"]
 
 [tool.black]
 line-length = 100

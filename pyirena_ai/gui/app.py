@@ -67,6 +67,16 @@ def build_app():
                     choices=list_strategies() or ["unified_fit_default"],
                     value="unified_fit_default",
                 )
+                context_txt = gr.Textbox(
+                    label="Context for this fit (optional)",
+                    placeholder=(
+                        "e.g. polymer brush in D₂O, expect 2 levels;\n"
+                        "Rg ~50 Å and ~500 Å"
+                    ),
+                    lines=3,
+                    info="Sample description or expected structure. "
+                         "Appended to the system prompt for this run only.",
+                )
 
                 with gr.Row():
                     fit_btn  = gr.Button("▶ Fit",  variant="primary")
@@ -115,18 +125,20 @@ def build_app():
 
         provider_dd.change(on_provider_change, inputs=provider_dd, outputs=model_txt)
 
-        def on_fit(file_path, provider, model_id, base_url, strategy):
+        def on_fit(file_path, provider, model_id, base_url, strategy, user_context):
             if not file_path:
                 yield None, "_No file selected._", [], "", "error: no file"
                 return
             for state_tuple in runner.stream(
-                file_path, provider, model_id or "", base_url or "", strategy
+                file_path, provider, model_id or "", base_url or "",
+                strategy, user_context or "",
             ):
                 yield state_tuple
 
         fit_btn.click(
             fn=on_fit,
-            inputs=[file_input, provider_dd, model_txt, base_url_txt, strategy_dd],
+            inputs=[file_input, provider_dd, model_txt, base_url_txt,
+                    strategy_dd, context_txt],
             outputs=[fit_image, params_md, log_bot, token_md, status_txt],
         )
 
