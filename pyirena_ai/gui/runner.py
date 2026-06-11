@@ -106,6 +106,10 @@ class GradioRunner:
             self._q.put(state.clone())
 
         try:
+            # Normalize path: strip whitespace and surrounding quotes (users
+            # often paste shell paths like '/my data/file.h5' with quotes).
+            file_path = file_path.strip().strip("'\"")
+
             # ---- build provider -------------------------------------------
             settings = load_settings()
             prov_cfg = settings.get(provider_name)

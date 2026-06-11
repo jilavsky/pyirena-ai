@@ -37,7 +37,10 @@ def default_audit_path(input_file: str | Path) -> Path:
     Using a subfolder keeps the data directory clean while keeping
     audit files findable right next to the fitted HDF5.
     """
-    p = Path(input_file).resolve()
+    # Strip surrounding quotes that users sometimes include when pasting
+    # shell paths (e.g. '/path with spaces/file.h5' → /path with spaces/file.h5)
+    s = str(input_file).strip().strip("'\"")
+    p = Path(s).resolve()
     audit_name = p.name + ".audit.json"
     return p.parent / AUDIT_SUBDIR / audit_name
 
