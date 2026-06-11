@@ -8,10 +8,13 @@ from pyirena_ai.core.audit import AUDIT_SCHEMA, default_audit_path, write_audit_
 from pyirena_ai.core.session import RunSession
 
 
-def test_default_audit_path_appends_extension(tmp_path):
+def test_default_audit_path_uses_subfolder(tmp_path):
     p = tmp_path / "scan_007.h5"
     out = default_audit_path(p)
-    assert str(out).endswith(".audit.json")
+    # Audit goes into <data_dir>/pyirena-ai/<filename>.audit.json
+    assert out.parent.name == "pyirena-ai"
+    assert out.parent.parent == tmp_path
+    assert out.name == "scan_007.h5.audit.json"
 
 
 def test_round_trip_minimal(tmp_path):

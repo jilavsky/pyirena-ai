@@ -1,7 +1,11 @@
-"""Write the run audit trail next to the fitted HDF5.
+"""Write the run audit trail into a per-folder subfolder.
 
 Schema: ``pyirena-ai/audit/v1``. The format is stamped from day 1 so we
 can evolve it without guesswork later.
+
+Audit files go to ``<data_dir>/pyirena-ai/<filename>.audit.json`` so the
+data folder stays clean while audits remain easy to find alongside the
+fitted HDF5.
 
 The result dict for an image-returning tool (`get_fit_image`,
 `get_residuals_image`) embeds a ~50–100 KB base64 PNG, which would bloat
@@ -24,9 +28,18 @@ from pyirena_ai.core.tools import CONTROL_API_VERSION, PYIRENA_VERSION, is_image
 AUDIT_SCHEMA = "pyirena-ai/audit/v1"
 
 
+AUDIT_SUBDIR = "pyirena-ai"
+
+
 def default_audit_path(input_file: str | Path) -> Path:
-    p = Path(input_file)
-    return p.with_suffix(p.suffix + ".audit.json")
+    """Return `<data_dir>/pyirena-ai/<filename>.audit.json`.
+
+    Using a subfolder keeps the data directory clean while keeping
+    audit files findable right next to the fitted HDF5.
+    """
+    p = Path(input_file).resolve()
+    audit_name = p.name + ".audit.json"
+    return p.parent / AUDIT_SUBDIR / audit_name
 
 
 def write_audit_json(session: RunSession, out_path: str | Path) -> Path:

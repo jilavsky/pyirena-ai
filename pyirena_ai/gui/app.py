@@ -2,6 +2,13 @@
 
 Compatible with Gradio 6.x (theme/css moved to launch()).
 
+File input design: a plain path textbox rather than gr.File. Gradio's
+file-upload widget copies files to a temp directory that is inaccessible
+on macOS (/private/var/folders/…). Using a path textbox means the runner
+works directly on the user's actual file, saves the fitted result back
+to the same path, and puts the audit JSON in a <data_dir>/pyirena-ai/
+subfolder the user can easily reach in Finder or Explorer.
+
 Launch via:
     pyirena-ai gui
 or:
@@ -26,9 +33,6 @@ def build_app():
     from pyirena_ai.gui.runner import GradioRunner
 
     settings = load_settings()
-
-    # One runner instance per Gradio app lifetime.  A new runner is
-    # created each time build_app() is called (i.e. each server start).
     runner = GradioRunner()
 
     # -----------------------------------------------------------------------
@@ -37,16 +41,22 @@ def build_app():
     with gr.Blocks(title="pyirena-ai · Unified Fit Agent") as demo:
         gr.Markdown(
             "# pyirena-ai · Unified Fit Agent\n"
-            "Upload a NXcanSAS HDF5 file and let the AI drive the Unified Fit workflow."
+            "Paste the path to a NXcanSAS HDF5 file. "
+            "The fitted result is saved back to the same file; "
+            "the audit log goes to `<data_folder>/pyirena-ai/`."
         )
 
         with gr.Row():
             # ---- Left column — controls ----
-            with gr.Column(scale=1, min_width=280):
-                file_input = gr.File(
-                    label="NXcanSAS HDF5 file",
-                    file_types=[".h5", ".hdf5"],
-                    type="filepath",
+            with gr.Column(scale=1, min_width=300):
+                file_path_txt = gr.Textbox(
+                    label="HDF5 file path",
+                    placeholder="/path/to/your/scan.h5",
+                    info=(
+                        "Paste the full path to the NXcanSAS HDF5 file. "
+                        "The fit is saved back to this file in-place."
+                    ),
+                    lines=2,
                 )
 
                 provider_dd = gr.Dropdown(
@@ -59,7 +69,7 @@ def build_app():
                     placeholder="e.g. claude-opus-4-7",
                 )
                 base_url_txt = gr.Textbox(
-                    label="Base URL (leave blank for default or configured value)",
+                    label="Base URL (leave blank for configured default)",
                     placeholder="https://your-proxy/v1",
                 )
                 strategy_dd = gr.Dropdown(
@@ -74,8 +84,10 @@ def build_app():
                         "Rg ~50 Å and ~500 Å"
                     ),
                     lines=3,
-                    info="Sample description or expected structure. "
-                         "Appended to the system prompt for this run only.",
+                    info=(
+                        "Sample description or expected structure — appended "
+                        "to the system prompt for this run only."
+                    ),
                 )
 
                 with gr.Row():
@@ -98,7 +110,7 @@ def build_app():
                         height=520,
                     )
                     params_md = gr.Markdown(
-                        value="_Select a file and press Fit._",
+                        value="_Enter a file path and press ▶ Fit._",
                         label="Parameter table",
                         min_height=300,
                     )
@@ -116,7 +128,6 @@ def build_app():
         # -----------------------------------------------------------------------
 
         def on_provider_change(name: str):
-            """Populate model-id hint from config when provider changes."""
             try:
                 p = settings.get(name)
                 return gr.update(placeholder=f"e.g. {p.model}")
@@ -126,8 +137,9 @@ def build_app():
         provider_dd.change(on_provider_change, inputs=provider_dd, outputs=model_txt)
 
         def on_fit(file_path, provider, model_id, base_url, strategy, user_context):
+            file_path = (file_path or "").strip()
             if not file_path:
-                yield None, "_No file selected._", [], "", "error: no file"
+                yield None, "_No file path entered._", [], "", "error: no file"
                 return
             for state_tuple in runner.stream(
                 file_path, provider, model_id or "", base_url or "",
@@ -137,7 +149,7 @@ def build_app():
 
         fit_btn.click(
             fn=on_fit,
-            inputs=[file_input, provider_dd, model_txt, base_url_txt,
+            inputs=[file_path_txt, provider_dd, model_txt, base_url_txt,
                     strategy_dd, context_txt],
             outputs=[fit_image, params_md, log_bot, token_md, status_txt],
         )
