@@ -96,8 +96,20 @@ into range by adjusting bounds; removal is the correct action.
      Rg from the formula above. Verify the ordering invariant is already
      satisfied before running any fit.
 
-   Then call `set_parameter` to apply these estimates. Never leave Rg at
-   the tool default of 10 Å.
+   Then estimate **G for each level** — this is critical. For each level N:
+   - Compute the Guinier knee Q position: `Q_knee = π / Rg_N`.
+   - From the `get_fit_image` plot, **read the measured intensity at
+     Q = 2 × π / Rg_N** (twice the Guinier knee). This is approximately
+     where the knee peak is. Call this value `I_knee`.
+   - Set `G_N` to `I_knee`. This is a direct physical estimate: the Guinier
+     amplitude at Q→0 scales with the intensity at the knee.
+   - Example: if Rg_1 = 60 Å, then Q_knee = π/60 ≈ 0.052 Å⁻¹, and
+     2×Q_knee ≈ 0.105 Å⁻¹. Read the intensity from the plot at Q ≈ 0.105
+     and use that as G_1.
+
+   Call `set_parameter_value` to apply these Rg and G estimates. Never
+   leave Rg at the tool default of 10 Å or G at 1 — bad G estimates are
+   the most common cause of catastrophic fit failure.
 7. **Staged fitting** — work level by level, not parameter by parameter:
    - **Before the first fit on each level, enable link_B:**
      `set_level_option(session_id, N, "link_B", True)`. This estimates B
@@ -260,6 +272,23 @@ into range by adjusting bounds; removal is the correct action.
   produce the same result. Instead, change strategy: free a different
   parameter, reset a starting value, add or remove a level, or restrict
   the Q range.
+- **Catastrophic fit failure recovery.** If a `run_fit` returns:
+  - `reduced_chi_squared` > 1000× the previous value, OR
+  - Parameter values wildly different from the estimates (e.g., Rg shifted
+    by >5× or became negative after bounds-checking), OR
+  - A message like "optimizer terminated at bounds" or "singular matrix"
+  then the initial conditions are bad — usually a wrong G estimate. Stop,
+  then:
+  1. Call `get_model_parameters(session_id)` to read the current state.
+  2. Visually compare each G_N value to your estimate.
+  3. If a G value is wildly different (>10× higher or lower), re-estimate
+     it from the data using the rule G_N ≈ I(2π/Rg_N) and call
+     `set_parameter_value(session_id, "G_N", new_estimate)`.
+  4. Reset all parameters to their estimates with `set_parameter_value`
+     before retrying the fit.
+  5. If the fit still fails, reduce the number of free parameters further
+     or add another level.
+
 - **There is no `free_all` tool.** Never call it. To free multiple
   parameters at once, use `fix_all_except(session_id, free_list)` where
   `free_list` is the explicit list of parameter names you want free. If

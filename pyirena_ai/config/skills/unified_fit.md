@@ -26,8 +26,15 @@ knee in the log-log plot and compute Rg ≈ π / Q_knee.
 - Knee at Q = 0.001 Å⁻¹ → Rg ≈ 3140 Å
 
 **G** — Guinier prefactor (cm⁻¹). Sets the intensity of this level at Q→0.
-Must satisfy: `5 × I_min ≤ G ≤ I_max` (measured intensity range). Good estimate of starting G for fitting is the intensity at Q=π/Rg. Exception:
-the large-scale power-law level has G = 0 by definition.
+Must satisfy: `5 × I_min ≤ G ≤ I_max` (measured intensity range).
+
+**Critical G-estimation rule:** The best starting estimate is the measured
+intensity at Q = 2π/Rg, which is close to the Guinier knee peak. Do NOT
+guess or use default 1 — wrong G values cause fits to diverge catastrophically.
+From the log-log data plot, find the intensity value at this Q position and
+use it directly as G_start.
+
+Exception: the large-scale power-law level has G = 0 by definition.
 
 **P** — power-law exponent (log-log slope). Start fixed at 4; free only if
 residuals show systematic slope mismatch in the power-law region.
@@ -140,9 +147,15 @@ consecutive fits on the same dataset. Judge quality by residual shape only.
 
 ## Common mistakes
 
-- **Fitting with default values:** Rg=10 Å, ETA=10 Å, PACK=0 are all
-  wrong defaults. Set Rg from π/Q_knee; set ETA = 3×Rg with lower bound
-  2×Rg; set PACK = 1 — before any fit involving those parameters.
+- **Fitting with default values:** Rg=10 Å, G=1, ETA=10 Å, PACK=0 are all
+  wrong defaults. Set Rg from π/Q_knee; set G from I(2π/Rg); set ETA = 3×Rg
+  with lower bound 2×Rg; set PACK = 1 — before any fit involving those
+  parameters. **Wrong G estimates cause catastrophic divergence** — estimate
+  directly from data, do not guess.
+- **Catastrophic fit divergence:** If chi² explodes or parameters diverge
+  wildly after the first fit, the initial G estimate was wrong. Re-estimate
+  each G_N from the data intensity at Q=2π/Rg_N, reset all parameters, and
+  refit.
 - **Not detecting correlation pattern:** After each fit, count zero-crossings
   in each level's Q window. A +-+ pattern with ≤ 3 crossings means
   correlations are needed, even if the overall fit looks reasonable.
