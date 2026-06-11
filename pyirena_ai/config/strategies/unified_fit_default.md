@@ -171,9 +171,16 @@ into range by adjusting bounds; removal is the correct action.
    **Corrective action for any failed check:**
    Add the highest-numbered level: G = 0, Rg = 10¹⁰, fix both, fit only
    B and P. Then rerun the correlation check (step 8) and this check again.
-10. **`get_fit_image(session_id)`** — confirm residuals are random across
-    the full log Q range, ordering invariant holds, G validity holds,
-    and ETA ≥ 2 × Rg for any level with correlations enabled.
+10. **MANDATORY pre-save image update** — these two calls are required
+    immediately before `save_fit`. Do not skip them even if you called
+    `get_fit_image` earlier in the workflow.
+    - `get_fit_image(session_id)` — updates the user-facing GUI plot to
+      the final fit state. The user judges the result from this image;
+      if it shows an earlier iteration, the work is invisible to them.
+    - `get_residuals_image(session_id)` — updates the residuals panel.
+    Confirm: residuals are random across the full log Q range, ordering
+    invariant holds, G validity holds, and ETA ≥ 2 × Rg for any level
+    with correlations enabled.
 11. **`save_fit(session_id)`** — write back to the source file.
 12. **`export_fit_report(session_id, format="markdown")`** — return the
     text as your final assistant response.
@@ -211,6 +218,12 @@ into range by adjusting bounds; removal is the correct action.
     parameter. Valid assignments: RgCO_2 = Rg_1, RgCO_3 = Rg_2, RgCO_4 = Rg_3.
     After any fit that changes Rg_(N−1), update the fixed RgCO_N value
     to match the new Rg_(N−1) before the next fit.
+
+- **Never call `save_fit` without immediately preceding it with
+  `get_fit_image` and `get_residuals_image` in that same tool-call
+  sequence.** The GUI displays whatever image was returned most recently;
+  if the last image was from an intermediate iteration, the user sees a
+  stale plot. Step 10 is not optional even when the fit appears done.
 
 - **After every `run_fit` involving ETA, verify ETA ≥ 2 × Rg for that
   level.** If violated, the result is physically impossible (particles
