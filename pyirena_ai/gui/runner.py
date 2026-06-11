@@ -34,7 +34,7 @@ from pyirena_ai.core.session import RunSession
 from pyirena_ai.core.skills import build_system_prompt
 from pyirena_ai.core.strategy import load_strategy
 from pyirena_ai.core.tools import dispatch, is_image_result
-from pyirena_ai.gui.formatting import params_to_markdown, token_line, tool_event_line
+from pyirena_ai.gui.formatting import clean_llm_text, params_to_markdown, token_line, tool_event_line
 from pyirena_ai.llm.pricing import estimate_cost_usd
 from pyirena_ai.llm.registry import agent_defaults, build_provider
 
@@ -237,7 +237,7 @@ class GradioRunner:
             final = agent.run(user_prompt)
 
             if final.text:
-                state.log.append({"role": "assistant", "content": final.text})
+                state.log.append({"role": "assistant", "content": clean_llm_text(final.text)})
 
         except StopFitError:
             state.log.append({"role": "assistant", "content": "⏹ Fit stopped by user."})

@@ -4,6 +4,7 @@ for the Gradio parameter table, agent log, and token counter panels.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -81,6 +82,19 @@ def token_line(in_tok: int, out_tok: int, cost: float | None) -> str:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def clean_llm_text(text: str) -> str:
+    """Strip model-specific channel/thinking wrappers from LLM output.
+
+    Some models (Mistral/Magistral family) wrap their reasoning in
+    ``<|channel>thought ... <channel|>`` blocks before the visible reply.
+    Strip those blocks and return only the response text.
+    """
+    if not text:
+        return text
+    text = re.sub(r"<\|channel>.*?<channel\|>\s*", "", text, flags=re.DOTALL)
+    return text.strip()
+
 
 def _fmt(v: Any) -> str:
     if v is None:

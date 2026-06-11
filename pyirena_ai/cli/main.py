@@ -32,6 +32,7 @@ from pyirena_ai.core.agent import Agent
 from pyirena_ai.core.audit import default_audit_path, write_audit_json
 from pyirena_ai.core.session import RunSession
 from pyirena_ai.core.skills import build_system_prompt
+from pyirena_ai.gui.formatting import clean_llm_text
 from pyirena_ai.core.strategy import list_strategies, load_strategy
 from pyirena_ai.core.tools import dispatch
 from pyirena_ai.llm.pricing import estimate_cost_usd
@@ -262,7 +263,7 @@ def cmd_fit(args: argparse.Namespace) -> int:
     write_audit_json(session, audit_path)
 
     print()
-    print(final.text or "(no final assistant text)")
+    print(clean_llm_text(final.text) or "(no final assistant text)")
     print()
     print(f"input file:        {input_path}")
     print(f"saved fit to:      {session.saved_to or '(not saved by agent)'}")
