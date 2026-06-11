@@ -115,9 +115,14 @@ into range by adjusting bounds; removal is the correct action.
      position=-1)`, set its initial Rg ≥ 3× the current largest Rg, enable
      link_B for the new level, and stage it the same way (Rg+G first with
      link_B=True, then release link_B and fit all four once stable).
-   - After all levels are individually tuned, run a **final fit with all
-     parameters free** (`free_all(session_id)` → `run_fit`) → **verify
-     ordering invariant and G validity**.
+   - After all levels are individually tuned, run a **final global fit**.
+     There is no `free_all` tool — use `fix_all_except` with the full
+     list of main parameters instead:
+     `fix_all_except(session_id, ["Rg_1","G_1","B_1","P_1","background"])` for
+     a 1-level model; add `"Rg_2","G_2","B_2","P_2"` etc. for each additional
+     level. Do NOT include ETA, PACK, or RgCO in this list unless you are
+     explicitly fitting those parameters for that level.
+     Then `run_fit` → **verify ordering invariant and G validity**.
 8. **Mandatory correlation check — must be performed before saving.**
    Call `get_residuals(session_id)`. For each level N, examine the
    residuals in its Q window: from `π/(2×Rg_N)` to `2π/Rg_N`.
@@ -142,7 +147,7 @@ into range by adjusting bounds; removal is the correct action.
    g. `run_fit` → verify ETA_N ≥ 2 × Rg_N. If violated, ETA drifted
       below the physical limit (particles overlapping) — reset to
       ETA_start, enforce the lower bound, and refit.
-   h. Free all parameters → `run_fit` (final fit with correlations).
+   h. Use `fix_all_except(session_id, [all main parameter names including ETA_N and PACK_N])` to free all relevant parameters → `run_fit` (final fit with correlations).
    i. Call `get_residuals` again and verify the +-+ pattern is gone.
 
 9. **Mandatory low-Q completeness check — must pass before saving.**
@@ -255,6 +260,11 @@ into range by adjusting bounds; removal is the correct action.
   produce the same result. Instead, change strategy: free a different
   parameter, reset a starting value, add or remove a level, or restrict
   the Q range.
+- **There is no `free_all` tool.** Never call it. To free multiple
+  parameters at once, use `fix_all_except(session_id, free_list)` where
+  `free_list` is the explicit list of parameter names you want free. If
+  you are unsure of the parameter names, call `get_model_parameters` first
+  and read them from the result.
 - If a tool returns `{"error": ..., "code": ..., "suggestion": ...}`, read
   the `suggestion` and adjust your next call. Do not retry blindly.
 - **Definition of "random residuals" (required to stop):** Normalized
