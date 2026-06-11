@@ -37,7 +37,7 @@ class Agent:
         system_prompt: str,
         session: RunSession,
         max_iterations: int = 50,
-        max_input_tokens: int = 200_000,
+        max_input_tokens: int = 10_000_000,
         max_tokens_per_turn: int = 4096,
         on_progress: Optional[ProgressFn] = None,
     ):
