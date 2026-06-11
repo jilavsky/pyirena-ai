@@ -147,6 +147,106 @@ Validates: GUI framework choice, UX patterns.
 - Final summary report with parameter trends across the folder
 - Folder watcher mode for live instrument-side fitting
 
+#### Detailed design (added 2026-06-11 after Phase 2 lessons)
+
+User workflows envisioned:
+
+- **A. One-shot folder batch.** User pastes a folder path. App lists
+  matching `*.h5` files, user picks "all" or a subset, presses Fit.
+  Each file is fitted in sequence; per-file audit is written to
+  `<folder>/pyirena-ai/<filename>.audit.json`. A batch manifest
+  (`<folder>/pyirena-ai/_batch.json`) lists each file's outcome.
+
+- **B. Live folder watcher (beamline mode).** App watches a folder for new
+  `*.h5` files; each new file is queued and fitted when the previous one
+  finishes. Loop runs until the user stops it. Critical: files appearing
+  on the watcher must be *quiet* (write complete) before fitting — the
+  acquisition software may still be writing them.
+
+##### Design implications of current (Phase 1–2) decisions
+
+The current codebase is *folder-mode friendly* in most respects; the
+big new piece is an orchestrator that loops over files. Specifically:
+
+| Decision | Folder-mode impact |
+|----------|-------------------|
+| Audit subfolder `<dir>/pyirena-ai/<name>.audit.json` | ✅ Already folder-mode shaped: every file in a batch gets its own audit in the same place. |
+| In-place HDF5 overwrite via plain path | ✅ Each file in a folder is written in place. Plus: file-watcher mode needs the actual path, so this is on the critical path. |
+| `RunSession` is per-file (single `pyirena_session_id`) | ✅ One `RunSession` per file in the batch; collected in a `BatchSession` wrapper. Per-file audit unchanged. |
+| `pyirena.api.control` supports multiple open sessions | ✅ But we will fit serially (one open at a time) to keep memory bounded and to avoid one fit's failure cascading. |
+| Errors are dicts, never exceptions | ✅ Critical for batch mode — a per-file `{"error": …}` lets us continue to the next file rather than abort the batch. |
+| `GradioRunner` wraps one `Agent` for one file | ⚠️ Needs a `BatchRunner` layer that loops, instantiates one `Agent` per file, and re-uses the same provider object so we don't recreate the HTTP client per file. |
+| Stop button stops one `Agent` via `threading.Event` | ⚠️ For folder mode the semantics need to be "stop after current file" vs "stop immediately" — add a second `cancel_batch` flag. |
+| `--context` / GUI context textbox = one-shot per-fit | ⚠️ For batch the context typically applies to *the whole folder* (one sample, many scans). Per-file context override is unlikely to be needed v1 — punt. |
+| Strategy = one markdown file per agent run | ⚠️ Same strategy reused per file in batch. No change needed; just be aware that thousands of tokens of system prompt are re-paid per file. Cache-friendly providers (Anthropic prompt caching) mitigate this. |
+| Cost transparency: tokens + USD per run | ⚠️ Batch-level totals (sum across files) need to be displayed too. |
+| Per-fit `random_seed=42` baked into strategy | ✅ Reproducibility automatically applies per-file in batch. |
+
+##### Code shape sketch (do not implement until Phase 3)
+
+```
+pyirena_ai/core/
+  agent.py            # unchanged; one file per Agent run
+  batch.py            # NEW: BatchRunner — orchestrates N Agent runs
+  watcher.py          # NEW: folder watcher (watchdog) → enqueue → BatchRunner
+
+pyirena_ai/gui/
+  app.py              # accepts file OR folder path in the same textbox
+  runner.py           # GradioRunner detects path type, dispatches to
+                      #   single-file Agent or BatchRunner accordingly
+
+pyirena_ai/cli/
+  main.py             # `pyirena-ai fit FILE-or-FOLDER` (already takes a string)
+                      # `pyirena-ai watch FOLDER --strategy ...`
+```
+
+`BatchRunner` API:
+
+```python
+class BatchRunner:
+    def __init__(self, provider, *, system_prompt, on_file_start, on_file_done):
+        ...
+    def run(self, files: list[Path]) -> BatchSession:
+        # for each file: build RunSession + Agent, call agent.run(),
+        # collect into BatchSession; respect cancel flags
+        ...
+    def cancel_after_current(self): ...
+    def cancel_now(self): ...
+```
+
+`BatchSession` adds, on top of per-file `RunSession`s:
+- total tokens / cost across the batch
+- list of (path, outcome, χ²ᵣ) for the manifest
+
+##### Folder watcher specifics
+
+- Use `watchdog` library (already widely-used standard).
+- **Debounce**: a new-file event fires when the file is *opened* by the
+  writer, not when it's done. Wait until: (a) file size stable for ≥2 s,
+  AND (b) `h5py.File(..., 'r')` opens successfully and finds the
+  expected NXcanSAS groups. Skip with a log line otherwise; the file
+  will re-fire if it's renamed/touched later.
+- **Restart safety**: on startup, scan the folder for any `*.h5` whose
+  matching audit is missing (`pyirena-ai/<name>.audit.json` doesn't
+  exist or is older than the HDF5). Fit those first, then watch.
+- **Recovery**: if a fit crashes the agent, write a partial audit
+  marking the file as `failed` (don't write the audit at all and we'll
+  loop trying it again on restart).
+
+##### Open questions for Phase 3 kickoff
+
+1. Should the GUI show a per-file progress table (rows: filename,
+   status, χ²ᵣ, time, cost)? Almost certainly yes; design then.
+2. Cancel semantics: one button with three states (idle / cancel
+   after current / cancel immediately) vs two buttons. Probably two
+   buttons keeps it explicit.
+3. Watcher loop in same Gradio process or a separate background
+   daemon? Same-process is fine v1; revisit if it interferes with GUI
+   responsiveness.
+4. When a fit produces a poor χ²ᵣ in batch mode, should the agent be
+   asked to retry with different starting conditions, or just flag and
+   move on? Default: flag and move on; user opt-in retry.
+
 ### Phase 4 — Distribution polish (medium)
 **Goal:** ship-ready for 10-100 users/month.
 

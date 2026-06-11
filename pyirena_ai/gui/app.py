@@ -46,6 +46,16 @@ def build_app():
             "the audit log goes to `<data_folder>/pyirena-ai/`."
         )
 
+        # Per-provider memory of (model_id, base_url) text-field values for the
+        # current GUI session. Each entry remembers exactly what the user typed
+        # while that provider was active, so switching providers restores their
+        # last input rather than clearing the field. Empty string = use the
+        # default from ~/.pyirena-ai/config.toml. Survives provider switches
+        # but not GUI restarts.
+        provider_memory = gr.State(
+            {p: {"model": "", "base_url": ""} for p in known_providers()}
+        )
+
         with gr.Row():
             # ---- Left column — controls ----
             with gr.Column(scale=1, min_width=300):
@@ -127,14 +137,45 @@ def build_app():
         # Events
         # -----------------------------------------------------------------------
 
-        def on_provider_change(name: str):
+        def on_provider_change(name: str, memory: dict):
+            """Restore the (model, base_url) values the user last typed for this provider."""
+            entry = memory.get(name, {"model": "", "base_url": ""})
             try:
-                p = settings.get(name)
-                return gr.update(placeholder=f"e.g. {p.model}")
+                config_model = settings.get(name).model
             except KeyError:
-                return gr.update()
+                config_model = ""
+            model_placeholder = f"e.g. {config_model}" if config_model else ""
+            return (
+                gr.update(value=entry.get("model", ""), placeholder=model_placeholder),
+                gr.update(value=entry.get("base_url", "")),
+            )
 
-        provider_dd.change(on_provider_change, inputs=provider_dd, outputs=model_txt)
+        provider_dd.change(
+            on_provider_change,
+            inputs=[provider_dd, provider_memory],
+            outputs=[model_txt, base_url_txt],
+        )
+
+        def remember_model(model_value: str, provider: str, memory: dict):
+            memory.setdefault(provider, {"model": "", "base_url": ""})
+            memory[provider]["model"] = model_value or ""
+            return memory
+
+        def remember_base_url(url_value: str, provider: str, memory: dict):
+            memory.setdefault(provider, {"model": "", "base_url": ""})
+            memory[provider]["base_url"] = url_value or ""
+            return memory
+
+        model_txt.change(
+            remember_model,
+            inputs=[model_txt, provider_dd, provider_memory],
+            outputs=[provider_memory],
+        )
+        base_url_txt.change(
+            remember_base_url,
+            inputs=[base_url_txt, provider_dd, provider_memory],
+            outputs=[provider_memory],
+        )
 
         def on_fit(file_path, provider, model_id, base_url, strategy, user_context):
             file_path = (file_path or "").strip()
