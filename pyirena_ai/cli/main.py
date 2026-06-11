@@ -35,7 +35,7 @@ from pyirena_ai.core.skills import build_system_prompt
 from pyirena_ai.core.strategy import list_strategies, load_strategy
 from pyirena_ai.core.tools import dispatch
 from pyirena_ai.llm.pricing import estimate_cost_usd
-from pyirena_ai.llm.registry import build_provider, known_providers
+from pyirena_ai.llm.registry import agent_defaults, build_provider, known_providers
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,9 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_fit.add_argument("--save-out", default="",
                        help="HDF5 output path. Default: overwrite input.")
     p_fit.add_argument("--max-tokens", type=int, default=4096,
-                       help="Max tokens per LLM turn.")
-    p_fit.add_argument("--max-iterations", type=int, default=50,
-                       help="Hard cap on tool-use round-trips.")
+                       help="Max output tokens per LLM turn (default: 4096).")
+    p_fit.add_argument("--max-iterations", type=int, default=0,
+                       help="Hard cap on tool-use round-trips. "
+                            "Default: 30 for commercial providers (anthropic, openai), "
+                            "150 for local providers (lmstudio, ollama).")
     p_fit.add_argument("--context", default="",
                        help="One-shot context for this fit (sample description, "
                             "expected structure, etc.). Appended to the system prompt.")
@@ -225,11 +227,15 @@ def cmd_fit(args: argparse.Namespace) -> int:
         system_prompt=system_prompt,
     )
 
+    prov_defaults = agent_defaults(args.provider)
+    max_iter = args.max_iterations or prov_defaults["max_iterations"]
+
     agent = Agent(
         provider,
         system_prompt=system_prompt,
         session=session,
-        max_iterations=args.max_iterations,
+        max_iterations=max_iter,
+        max_input_tokens=prov_defaults["max_input_tokens"],
         max_tokens_per_turn=args.max_tokens,
         on_progress=progress,
     )

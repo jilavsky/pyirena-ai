@@ -36,7 +36,7 @@ from pyirena_ai.core.strategy import load_strategy
 from pyirena_ai.core.tools import dispatch, is_image_result
 from pyirena_ai.gui.formatting import params_to_markdown, token_line, tool_event_line
 from pyirena_ai.llm.pricing import estimate_cost_usd
-from pyirena_ai.llm.registry import build_provider
+from pyirena_ai.llm.registry import agent_defaults, build_provider
 
 
 class StopFitError(Exception):
@@ -206,10 +206,13 @@ class GradioRunner:
                     state.log.append({"role": "user", "content": f"🤖 {msg}"})
                     push()
 
+            prov_defaults = agent_defaults(provider_name)
             agent = StreamingAgent(
                 provider,
                 system_prompt=system_prompt,
                 session=self._session,
+                max_iterations=prov_defaults["max_iterations"],
+                max_input_tokens=prov_defaults["max_input_tokens"],
                 on_progress=on_progress,
             )
 
@@ -221,6 +224,15 @@ class GradioRunner:
                 "Return a plain-English summary as your final message."
             )
 
+            state.log.append({
+                "role": "user",
+                "content": (
+                    f"🚀 Starting fit — provider: **{provider_name}** · "
+                    f"model: **{model_id}** · "
+                    f"max iterations: **{prov_defaults['max_iterations']}** · "
+                    f"input token cap: **{prov_defaults['max_input_tokens']:,}**"
+                ),
+            })
             push("running")
             final = agent.run(user_prompt)
 
