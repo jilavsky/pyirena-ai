@@ -60,6 +60,10 @@ class AssistantResponse:
     raw_content: list[dict] = field(default_factory=list)
     """Provider's native content-block list, ready to be echoed back as an assistant
     message in the next turn. The agent loop should not introspect this."""
+    thinking_text: str = ""
+    """Reasoning the model exposed for this turn, when supported. Anthropic
+    extended thinking and Magistral-family channel blocks populate this;
+    plain chat models leave it empty. Display-only — must not be sent back."""
 
 
 class LLMProvider(ABC):
@@ -74,11 +78,13 @@ class LLMProvider(ABC):
         model: str,
         base_url: str = "",
         timeout: float = 120.0,
+        enable_thinking: bool = False,
     ):
         self.api_key = api_key
         self.model = model
         self.base_url = (base_url or "").rstrip("/")
         self.timeout = timeout
+        self.enable_thinking = enable_thinking
 
     @abstractmethod
     def send_with_tools(

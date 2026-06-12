@@ -1,6 +1,29 @@
-"""Gradio Blocks layout for the pyirena-ai Unified Fit agent GUI.
+"""Gradio Blocks layout for the pyirena-ai agent GUI.
 
 Compatible with Gradio 6.x (theme/css moved to launch()).
+
+Two tabs:
+
+  * **Fit**  — one-shot driver: paste a path → press ▶ Fit → watch the
+    canned "Fit the dataset at …" prompt run to completion.
+  * **Chat** — persistent multi-turn session: open the dataset once, then
+    converse with the agent. Useful for probing what each model can see,
+    what tools it picks unprompted, and how the strategy / skills layers
+    of the system prompt change its behavior.
+
+Both tabs share three toggles:
+
+  * **Include fitting strategy** — drops the staged-workflow markdown
+    file from the system prompt when off. Used to test how an agent
+    behaves with only tool descriptions + expert skills.
+  * **Include expert skills**   — drops the per-tool expert-guidance
+    markdown when off.
+  * **Show agent thinking**     — for Anthropic Claude models, enables
+    extended thinking and renders the reasoning blocks inline. For
+    Magistral-family local models served via lmstudio/ollama, extracts
+    `<|channel>…<channel|>` reasoning content the model emits anyway.
+    Models without any reasoning surface (most OpenAI chat models, plain
+    local models) simply show no thinking block.
 
 File input design: a plain path textbox rather than gr.File. Gradio's
 file-upload widget copies files to a temp directory that is inaccessible
@@ -30,10 +53,11 @@ def build_app():
             "Gradio is not installed. Run: pip install \"pyirena-ai[gui]\""
         ) from e
 
+    from pyirena_ai.gui.chat_runner import ChatRunner
     from pyirena_ai.gui.runner import GradioRunner
 
     settings = load_settings()
-    runner = GradioRunner()
+    fit_runner = GradioRunner()
 
     # -----------------------------------------------------------------------
     # Layout
@@ -56,85 +80,212 @@ def build_app():
             {p: {"model": "", "base_url": ""} for p in known_providers()}
         )
 
-        with gr.Row():
-            # ---- Left column — controls ----
-            with gr.Column(scale=1, min_width=300):
-                file_path_txt = gr.Textbox(
-                    label="HDF5 file path",
-                    placeholder="/path/to/your/scan.h5",
-                    info=(
-                        "Paste the full path to the NXcanSAS HDF5 file. "
-                        "The fit is saved back to this file in-place."
-                    ),
-                    lines=2,
-                )
+        with gr.Tabs():
+            # ============================================================
+            # Tab 1 — Fit (one-shot)
+            # ============================================================
+            with gr.Tab("Fit"):
+                with gr.Row():
+                    # ---- Left column — controls ----
+                    with gr.Column(scale=1, min_width=300):
+                        fit_file_path = gr.Textbox(
+                            label="HDF5 file path",
+                            placeholder="/path/to/your/scan.h5",
+                            info=(
+                                "Paste the full path to the NXcanSAS HDF5 file. "
+                                "The fit is saved back to this file in-place."
+                            ),
+                            lines=2,
+                        )
 
-                provider_dd = gr.Dropdown(
-                    label="LLM provider",
-                    choices=known_providers(),
-                    value="anthropic",
-                )
-                model_txt = gr.Textbox(
-                    label="Model ID (leave blank for configured default)",
-                    placeholder="e.g. claude-opus-4-7",
-                )
-                base_url_txt = gr.Textbox(
-                    label="Base URL (leave blank for configured default)",
-                    placeholder="https://your-proxy/v1",
-                )
-                strategy_dd = gr.Dropdown(
-                    label="Fitting strategy",
-                    choices=list_strategies() or ["unified_fit_default"],
-                    value="unified_fit_default",
-                )
-                context_txt = gr.Textbox(
-                    label="Context for this fit (optional)",
-                    placeholder=(
-                        "e.g. polymer brush in D₂O, expect 2 levels;\n"
-                        "Rg ~50 Å and ~500 Å"
-                    ),
-                    lines=3,
-                    info=(
-                        "Sample description or expected structure — appended "
-                        "to the system prompt for this run only."
-                    ),
-                )
+                        fit_provider = gr.Dropdown(
+                            label="LLM provider",
+                            choices=known_providers(),
+                            value="anthropic",
+                        )
+                        fit_model = gr.Textbox(
+                            label="Model ID (leave blank for configured default)",
+                            placeholder="e.g. claude-opus-4-7",
+                        )
+                        fit_base_url = gr.Textbox(
+                            label="Base URL (leave blank for configured default)",
+                            placeholder="https://your-proxy/v1",
+                        )
+                        fit_strategy = gr.Dropdown(
+                            label="Fitting strategy",
+                            choices=list_strategies() or ["unified_fit_default"],
+                            value="unified_fit_default",
+                        )
+                        fit_context = gr.Textbox(
+                            label="Context for this fit (optional)",
+                            placeholder=(
+                                "e.g. polymer brush in D₂O, expect 2 levels;\n"
+                                "Rg ~50 Å and ~500 Å"
+                            ),
+                            lines=3,
+                            info=(
+                                "Sample description or expected structure — appended "
+                                "to the system prompt for this run only."
+                            ),
+                        )
+
+                        fit_inc_strategy = gr.Checkbox(
+                            label="Include fitting strategy",
+                            value=True,
+                            info="When off, the staged workflow / hard rules are dropped from the system prompt.",
+                        )
+                        fit_inc_skills = gr.Checkbox(
+                            label="Include expert skills",
+                            value=True,
+                            info="When off, the per-tool expert-guidance block is dropped.",
+                        )
+                        fit_show_thinking = gr.Checkbox(
+                            label="Show agent thinking (Anthropic / Magistral)",
+                            value=False,
+                            info="Enables Anthropic extended thinking; extracts Magistral channel reasoning.",
+                        )
+
+                        with gr.Row():
+                            fit_btn  = gr.Button("▶ Fit",  variant="primary")
+                            fit_stop_btn = gr.Button("⏹ Stop", variant="stop")
+
+                        fit_status = gr.Textbox(
+                            label="Status",
+                            value="idle",
+                            interactive=False,
+                            max_lines=1,
+                        )
+
+                    # ---- Right column — results ----
+                    with gr.Column(scale=3):
+                        with gr.Row():
+                            fit_image = gr.Image(
+                                label="Fit (data + model + residuals)",
+                                type="pil",
+                                height=520,
+                            )
+                            fit_params = gr.Markdown(
+                                value="_Enter a file path and press ▶ Fit._",
+                                label="Parameter table",
+                                min_height=300,
+                            )
+
+                        fit_log = gr.Chatbot(
+                            label="Agent log",
+                            height=320,
+                            autoscroll=True,
+                        )
+
+                        fit_token = gr.Markdown(value="", label="Token / cost")
+
+            # ============================================================
+            # Tab 2 — Chat (persistent multi-turn)
+            # ============================================================
+            with gr.Tab("Chat"):
+                # Holds the per-page ChatRunner across button clicks.
+                chat_runner_state = gr.State(None)
 
                 with gr.Row():
-                    fit_btn  = gr.Button("▶ Fit",  variant="primary")
-                    stop_btn = gr.Button("⏹ Stop", variant="stop")
+                    # ---- Left column — controls ----
+                    with gr.Column(scale=1, min_width=300):
+                        chat_file_path = gr.Textbox(
+                            label="HDF5 file path",
+                            placeholder="/path/to/your/scan.h5",
+                            lines=2,
+                        )
+                        chat_provider = gr.Dropdown(
+                            label="LLM provider",
+                            choices=known_providers(),
+                            value="anthropic",
+                        )
+                        chat_model = gr.Textbox(
+                            label="Model ID (leave blank for configured default)",
+                            placeholder="e.g. claude-opus-4-7",
+                        )
+                        chat_base_url = gr.Textbox(
+                            label="Base URL (leave blank for configured default)",
+                            placeholder="https://your-proxy/v1",
+                        )
+                        chat_strategy = gr.Dropdown(
+                            label="Fitting strategy",
+                            choices=list_strategies() or ["unified_fit_default"],
+                            value="unified_fit_default",
+                        )
+                        chat_context = gr.Textbox(
+                            label="Context for this session (optional)",
+                            placeholder="Sample description, instrument, etc.",
+                            lines=3,
+                        )
+                        chat_inc_strategy = gr.Checkbox(
+                            label="Include fitting strategy",
+                            value=True,
+                            info="When off, the staged workflow / hard rules are dropped from the system prompt.",
+                        )
+                        chat_inc_skills = gr.Checkbox(
+                            label="Include expert skills",
+                            value=True,
+                            info="When off, the per-tool expert-guidance block is dropped.",
+                        )
+                        chat_show_thinking = gr.Checkbox(
+                            label="Show agent thinking (Anthropic / Magistral)",
+                            value=False,
+                            info="Enables Anthropic extended thinking; extracts Magistral channel reasoning.",
+                        )
 
-                status_txt = gr.Textbox(
-                    label="Status",
-                    value="idle",
-                    interactive=False,
-                    max_lines=1,
-                )
+                        with gr.Row():
+                            chat_start_btn = gr.Button("▶ Start session", variant="primary")
+                            chat_end_btn   = gr.Button("⏹ End session", variant="stop")
 
-            # ---- Right column — results ----
-            with gr.Column(scale=3):
-                with gr.Row():
-                    fit_image = gr.Image(
-                        label="Fit (data + model + residuals)",
-                        type="pil",
-                        height=520,
-                    )
-                    params_md = gr.Markdown(
-                        value="_Enter a file path and press ▶ Fit._",
-                        label="Parameter table",
-                        min_height=300,
-                    )
+                        chat_stop_btn = gr.Button("⏸ Stop current turn", variant="secondary")
+                        chat_status = gr.Textbox(
+                            label="Status",
+                            value="idle",
+                            interactive=False,
+                            max_lines=1,
+                        )
 
-                log_bot = gr.Chatbot(
-                    label="Agent log",
-                    height=320,
-                    autoscroll=True,
-                )
+                    # ---- Right column — conversation + results ----
+                    with gr.Column(scale=3):
+                        chat_dialogue = gr.Chatbot(
+                            label="Conversation",
+                            height=380,
+                            autoscroll=True,
+                            render_markdown=True,
+                            sanitize_html=False,    # <details> for thinking
+                        )
 
-                token_md = gr.Markdown(value="", label="Token / cost")
+                        with gr.Row():
+                            chat_input = gr.Textbox(
+                                label="Your message",
+                                placeholder="e.g. show me the data; what do you see?",
+                                lines=2,
+                                scale=4,
+                            )
+                            chat_send_btn = gr.Button("Send", variant="primary", scale=1)
+
+                        with gr.Accordion("Tool & state panel", open=True):
+                            with gr.Row():
+                                chat_image = gr.Image(
+                                    label="Most recent image",
+                                    type="pil",
+                                    height=380,
+                                )
+                                chat_params = gr.Markdown(
+                                    value="_No session yet._",
+                                    label="Parameter table",
+                                    min_height=200,
+                                )
+                            chat_log = gr.Chatbot(
+                                label="Agent event log (tool calls)",
+                                height=200,
+                                autoscroll=True,
+                                render_markdown=True,
+                                sanitize_html=False,
+                                )
+                            chat_token = gr.Markdown(value="", label="Token / cost")
 
         # -----------------------------------------------------------------------
-        # Events
+        # Events — shared
         # -----------------------------------------------------------------------
 
         def on_provider_change(name: str, memory: dict):
@@ -150,12 +301,6 @@ def build_app():
                 gr.update(value=entry.get("base_url", "")),
             )
 
-        provider_dd.change(
-            on_provider_change,
-            inputs=[provider_dd, provider_memory],
-            outputs=[model_txt, base_url_txt],
-        )
-
         def remember_model(model_value: str, provider: str, memory: dict):
             memory.setdefault(provider, {"model": "", "base_url": ""})
             memory[provider]["model"] = model_value or ""
@@ -166,36 +311,143 @@ def build_app():
             memory[provider]["base_url"] = url_value or ""
             return memory
 
-        model_txt.change(
+        # Fit-tab provider memory wiring
+        fit_provider.change(
+            on_provider_change,
+            inputs=[fit_provider, provider_memory],
+            outputs=[fit_model, fit_base_url],
+        )
+        fit_model.change(
             remember_model,
-            inputs=[model_txt, provider_dd, provider_memory],
+            inputs=[fit_model, fit_provider, provider_memory],
             outputs=[provider_memory],
         )
-        base_url_txt.change(
+        fit_base_url.change(
             remember_base_url,
-            inputs=[base_url_txt, provider_dd, provider_memory],
+            inputs=[fit_base_url, fit_provider, provider_memory],
             outputs=[provider_memory],
         )
 
-        def on_fit(file_path, provider, model_id, base_url, strategy, user_context):
+        # Chat-tab provider memory wiring (uses the same shared provider_memory state)
+        chat_provider.change(
+            on_provider_change,
+            inputs=[chat_provider, provider_memory],
+            outputs=[chat_model, chat_base_url],
+        )
+        chat_model.change(
+            remember_model,
+            inputs=[chat_model, chat_provider, provider_memory],
+            outputs=[provider_memory],
+        )
+        chat_base_url.change(
+            remember_base_url,
+            inputs=[chat_base_url, chat_provider, provider_memory],
+            outputs=[provider_memory],
+        )
+
+        # -----------------------------------------------------------------------
+        # Events — Fit tab
+        # -----------------------------------------------------------------------
+
+        def on_fit(file_path, provider, model_id, base_url, strategy,
+                   user_context, inc_strategy, inc_skills, show_thinking):
             file_path = (file_path or "").strip()
             if not file_path:
                 yield None, "_No file path entered._", [], "", "error: no file"
                 return
-            for state_tuple in runner.stream(
+            for state_tuple in fit_runner.stream(
                 file_path, provider, model_id or "", base_url or "",
                 strategy, user_context or "",
+                include_strategy=inc_strategy,
+                include_skills=inc_skills,
+                show_thinking=show_thinking,
             ):
                 yield state_tuple
 
         fit_btn.click(
             fn=on_fit,
-            inputs=[file_path_txt, provider_dd, model_txt, base_url_txt,
-                    strategy_dd, context_txt],
-            outputs=[fit_image, params_md, log_bot, token_md, status_txt],
+            inputs=[fit_file_path, fit_provider, fit_model, fit_base_url,
+                    fit_strategy, fit_context, fit_inc_strategy, fit_inc_skills,
+                    fit_show_thinking],
+            outputs=[fit_image, fit_params, fit_log, fit_token, fit_status],
+        )
+        fit_stop_btn.click(fn=fit_runner.request_stop, inputs=[], outputs=[])
+
+        # -----------------------------------------------------------------------
+        # Events — Chat tab
+        # -----------------------------------------------------------------------
+
+        def on_chat_start(
+            runner, file_path, provider, model_id, base_url, strategy,
+            user_context, inc_strategy, inc_skills, show_thinking,
+        ):
+            # Always create a fresh ChatRunner per Start click — that way
+            # repeated Start clicks don't reuse a stale session.
+            new_runner = ChatRunner()
+            for tup in new_runner.start_session(
+                file_path, provider, model_id or "", base_url or "",
+                strategy, user_context or "",
+                inc_strategy, inc_skills, show_thinking,
+            ):
+                image, params, log, token, status, chat = tup
+                yield image, params, log, token, status, chat, new_runner
+
+        chat_start_btn.click(
+            fn=on_chat_start,
+            inputs=[chat_runner_state, chat_file_path, chat_provider,
+                    chat_model, chat_base_url, chat_strategy, chat_context,
+                    chat_inc_strategy, chat_inc_skills, chat_show_thinking],
+            outputs=[chat_image, chat_params, chat_log, chat_token,
+                     chat_status, chat_dialogue, chat_runner_state],
         )
 
-        stop_btn.click(fn=runner.request_stop, inputs=[], outputs=[])
+        def on_chat_send(runner, message):
+            if runner is None:
+                yield (None, "_No session._", [], "", "error: no session",
+                       [{"role": "assistant",
+                         "content": "⚠ Start a session first."}],
+                       runner, "")
+                return
+            for tup in runner.send(message):
+                image, params, log, token, status, chat = tup
+                yield image, params, log, token, status, chat, runner, ""
+
+        chat_send_btn.click(
+            fn=on_chat_send,
+            inputs=[chat_runner_state, chat_input],
+            outputs=[chat_image, chat_params, chat_log, chat_token,
+                     chat_status, chat_dialogue, chat_runner_state, chat_input],
+        )
+        chat_input.submit(
+            fn=on_chat_send,
+            inputs=[chat_runner_state, chat_input],
+            outputs=[chat_image, chat_params, chat_log, chat_token,
+                     chat_status, chat_dialogue, chat_runner_state, chat_input],
+        )
+
+        def on_chat_stop(runner):
+            if runner is not None:
+                runner.request_stop()
+
+        chat_stop_btn.click(
+            fn=on_chat_stop,
+            inputs=[chat_runner_state],
+            outputs=[],
+        )
+
+        def on_chat_end(runner):
+            if runner is None:
+                return None, "_No session._", [], "", "idle", [], None
+            tup = runner.end_session()
+            image, params, log, token, status, chat = tup
+            return image, params, log, token, status, chat, None
+
+        chat_end_btn.click(
+            fn=on_chat_end,
+            inputs=[chat_runner_state],
+            outputs=[chat_image, chat_params, chat_log, chat_token,
+                     chat_status, chat_dialogue, chat_runner_state],
+        )
 
     return demo
 

@@ -57,7 +57,22 @@ class Agent:
             "role": "user",
             "content": [{"type": "text", "text": user_prompt}],
         })
+        return self._run_loop()
 
+    def continue_chat(self, user_message: str) -> AssistantResponse:
+        """Append a new user message and run one more LLM→tool loop.
+
+        Reuses the existing conversation history and `RunSession` so token
+        counts, audit turns, and the open pyirena session_id all accumulate
+        across turns. Iteration/token caps apply per call (not reset).
+        """
+        self.messages.append({
+            "role": "user",
+            "content": [{"type": "text", "text": user_message}],
+        })
+        return self._run_loop()
+
+    def _run_loop(self) -> AssistantResponse:
         last_response: AssistantResponse = AssistantResponse(text="", stop_reason="end_turn")
 
         for iteration in range(self.max_iterations):
@@ -82,6 +97,11 @@ class Agent:
 
             self.session.input_tokens  += response.usage.input_tokens
             self.session.output_tokens += response.usage.output_tokens
+
+            if response.thinking_text:
+                self.session.add_assistant_text(
+                    f"[thinking] {response.thinking_text}"
+                )
 
             if response.text:
                 self.session.add_assistant_text(response.text)

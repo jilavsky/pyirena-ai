@@ -98,6 +98,9 @@ def build_system_prompt(
     strategy_text: str,
     tool_name: str = "unified_fit",
     extra_context: str = "",
+    *,
+    include_strategy: bool = True,
+    include_skills: bool = True,
 ) -> str:
     """Assemble the full system prompt from all four layers.
 
@@ -111,14 +114,24 @@ def build_system_prompt(
     extra_context:
         One-shot per-fit text from the CLI ``--context`` flag or the GUI
         "Additional context" textbox (not persisted).
+    include_strategy:
+        When False, drop the strategy block. Useful for testing how the
+        agent behaves with only tool descriptions + skills + user instructions.
+    include_skills:
+        When False, drop the bundled expert-skills block. Useful for testing
+        how the agent behaves with only the strategy + user instructions.
     """
-    parts = [strategy_text.strip()]
+    parts: list[str] = []
 
-    skills = load_skills(tool_name).strip()
-    if skills:
-        parts.append(
-            "\n## Expert fitting guidance\n\n" + skills
-        )
+    if include_strategy and strategy_text and strategy_text.strip():
+        parts.append(strategy_text.strip())
+
+    if include_skills:
+        skills = load_skills(tool_name).strip()
+        if skills:
+            parts.append(
+                "\n## Expert fitting guidance\n\n" + skills
+            )
 
     user_instr = load_user_instructions().strip()
     if user_instr:

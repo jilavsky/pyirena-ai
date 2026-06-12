@@ -79,6 +79,22 @@ def token_line(in_tok: int, out_tok: int, cost: float | None) -> str:
     return f"Tokens: in={in_tok:,}  out={out_tok:,}{cost_str}"
 
 
+def thinking_block(text: str) -> str:
+    """Wrap model reasoning in a collapsible HTML details element.
+
+    Long extended-thinking / Magistral-channel content would otherwise blow
+    up the chat. Gradio's Chatbot and Markdown both pass <details> through.
+    """
+    if not text or not text.strip():
+        return ""
+    safe = text.strip().replace("```", "ʼʼʼ")
+    return (
+        "<details><summary>🧠 thinking</summary>\n\n"
+        f"```\n{safe}\n```\n\n"
+        "</details>"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

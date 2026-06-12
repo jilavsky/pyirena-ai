@@ -34,7 +34,13 @@ from pyirena_ai.core.session import RunSession
 from pyirena_ai.core.skills import build_system_prompt
 from pyirena_ai.core.strategy import load_strategy
 from pyirena_ai.core.tools import dispatch, is_image_result
-from pyirena_ai.gui.formatting import clean_llm_text, params_to_markdown, token_line, tool_event_line
+from pyirena_ai.gui.formatting import (
+    clean_llm_text,
+    params_to_markdown,
+    thinking_block,
+    token_line,
+    tool_event_line,
+)
 from pyirena_ai.llm.pricing import estimate_cost_usd
 from pyirena_ai.llm.registry import agent_defaults, build_provider
 
@@ -54,11 +60,14 @@ _PARAM_CHANGING_TOOLS = {
 
 @dataclass
 class UIState:
-    image:       Any = None                   # PIL Image or None
-    params_md:   str = "_Not started_"
-    log:         list[dict] = field(default_factory=list)
-    token_md:    str = ""
-    status:      str = "idle"
+    image:         Any = None                   # PIL Image or None
+    params_md:     str = "_Not started_"
+    log:           list[dict] = field(default_factory=list)
+    token_md:      str = ""
+    status:        str = "idle"
+    chat_messages: list[dict] = field(default_factory=list)
+    """Chat-mode only: the user↔assistant dialogue (separate from `log`,
+    which holds tool-call events). Empty in Fit mode."""
 
     def clone(self) -> "UIState":
         return UIState(
@@ -67,10 +76,15 @@ class UIState:
             log=list(self.log),
             token_md=self.token_md,
             status=self.status,
+            chat_messages=list(self.chat_messages),
         )
 
     def as_tuple(self) -> tuple:
         return (self.image, self.params_md, self.log, self.token_md, self.status)
+
+    def as_chat_tuple(self) -> tuple:
+        return (self.image, self.params_md, self.log, self.token_md,
+                self.status, self.chat_messages)
 
 
 class GradioRunner:
@@ -96,6 +110,9 @@ class GradioRunner:
         base_url: str,
         strategy: str,
         user_context: str,
+        include_strategy: bool,
+        include_skills: bool,
+        show_thinking: bool,
         state: UIState,
     ) -> None:
         """Runs in a background thread. Mutates `state` and puts copies on the queue."""
@@ -124,11 +141,12 @@ class GradioRunner:
                 model=model_id,
                 base_url=base_url,
                 timeout=timeout,
+                enable_thinking=show_thinking,
             )
 
             # ---- load strategy + skills + user instructions ---------------
             try:
-                strategy_text = load_strategy(strategy)
+                strategy_text = load_strategy(strategy) if include_strategy else ""
             except KeyError as e:
                 state.log.append({"role": "assistant", "content": f"⚠ {e}"})
                 push("error: strategy not found")
@@ -138,6 +156,8 @@ class GradioRunner:
                 strategy_text,
                 tool_name="unified_fit",
                 extra_context=user_context,
+                include_strategy=include_strategy,
+                include_skills=include_skills,
             )
 
             self._session = RunSession(
@@ -149,77 +169,17 @@ class GradioRunner:
                 system_prompt=system_prompt,
             )
 
-            # ---- build a subclass of Agent that:
-            #       a) checks stop flag before each LLM call
-            #       b) updates UIState after each tool dispatch
-            # -----------------------------------------------------------------
-            q_ref = self._q
-            stop_ev = self._stop
-
-            class StreamingAgent(Agent):
-                def run(self_inner, user_prompt: str):
-                    # Patch send_with_tools to check stop flag first
-                    orig = self_inner.provider.send_with_tools
-
-                    def checked(**kw):
-                        if stop_ev.is_set():
-                            raise StopFitError("Stop requested by user")
-                        return orig(**kw)
-
-                    self_inner.provider.send_with_tools = checked  # type: ignore[method-assign]
-                    return super().run(user_prompt)
-
-                def _invoke_tool(self_inner, tc):
-                    block = super()._invoke_tool(tc)
-
-                    # Unpack the tool result recorded on the session
-                    last_turn = self_inner.session.turns[-1]
-                    result = last_turn.result
-                    elapsed = last_turn.elapsed_s
-
-                    # Log line
-                    line = tool_event_line(tc.name, tc.args, result, elapsed)
-                    state.log.append({"role": "assistant", "content": line})
-
-                    # Fit image
-                    if is_image_result(result):
-                        b64 = result.get("image_base64", "")
-                        if b64:
-                            state.image = _b64_to_pil(b64)
-
-                    # Parameter table — re-query after state-changing tools
-                    sid = self_inner.session.pyirena_session_id
-                    if tc.name in _PARAM_CHANGING_TOOLS and sid:
-                        pr = dispatch("get_model_parameters", {"session_id": sid})
-                        state.params_md = params_to_markdown(pr)
-
-                    # Token counter
-                    cost = estimate_cost_usd(
-                        self_inner.session.model,
-                        self_inner.session.input_tokens,
-                        self_inner.session.output_tokens,
-                    )
-                    state.token_md = token_line(
-                        self_inner.session.input_tokens,
-                        self_inner.session.output_tokens,
-                        cost,
-                    )
-                    push()
-                    return block
-
-            def on_progress(msg: str) -> None:
-                if "calling LLM" in msg:
-                    state.log.append({"role": "user", "content": f"🤖 {msg}"})
-                    push()
-
             prov_defaults = agent_defaults(provider_name)
-            agent = StreamingAgent(
-                provider,
+            agent = build_streaming_agent(
+                provider=provider,
                 system_prompt=system_prompt,
                 session=self._session,
+                state=state,
+                push=push,
+                stop_event=self._stop,
+                show_thinking=show_thinking,
                 max_iterations=prov_defaults["max_iterations"],
                 max_input_tokens=prov_defaults["max_input_tokens"],
-                on_progress=on_progress,
             )
 
             user_prompt = (
@@ -290,6 +250,9 @@ class GradioRunner:
         base_url: str,
         strategy: str,
         user_context: str = "",
+        include_strategy: bool = True,
+        include_skills: bool = True,
+        show_thinking: bool = False,
     ) -> Generator[tuple, None, None]:
         """Start the background thread and yield UIState tuples until done."""
         self._stop.clear()
@@ -298,25 +261,17 @@ class GradioRunner:
         t = threading.Thread(
             target=self._run,
             args=(file_path, provider_name, model_id, base_url, strategy,
-                  user_context, state),
+                  user_context, include_strategy, include_skills, show_thinking,
+                  state),
             daemon=True,
         )
         t.start()
 
-        while t.is_alive() or not self._q.empty():
-            try:
-                s = self._q.get(timeout=0.4)
-                yield s.as_tuple()
-            except queue.Empty:
-                yield state.clone().as_tuple()
-
-        t.join()
-        # Final yield to make sure the last state is sent.
-        yield state.clone().as_tuple()
+        yield from _pump_queue(t, self._q, state)
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Shared helpers — used by GradioRunner and ChatRunner
 # ---------------------------------------------------------------------------
 
 def _b64_to_pil(b64: str) -> Any:
@@ -324,3 +279,126 @@ def _b64_to_pil(b64: str) -> Any:
     from PIL import Image  # noqa: PLC0415
     data = base64.b64decode(b64)
     return Image.open(BytesIO(data))
+
+
+def build_streaming_agent(
+    *,
+    provider,
+    system_prompt: str,
+    session: RunSession,
+    state: UIState,
+    push,                                      # callable: push(status=None) → None
+    stop_event: threading.Event,
+    show_thinking: bool,
+    max_iterations: int,
+    max_input_tokens: int,
+) -> Agent:
+    """Construct an Agent that streams UIState updates as it runs.
+
+    Behavior added on top of the base Agent:
+      * Stop button: each call to provider.send_with_tools first checks
+        `stop_event` and raises `StopFitError` if set.
+      * Thinking display: when `show_thinking` is True, any `thinking_text`
+        on the response is appended to `state.log` as a collapsible block
+        before the tool dispatches that follow.
+      * Tool instrumentation: after each tool call, append a one-line event
+        to `state.log`, refresh the parameter table on state-changing tools,
+        capture fit images, and update the token counter.
+
+    Shared by `GradioRunner` (one-shot fit) and `ChatRunner` (multi-turn).
+    """
+
+    def on_progress(msg: str) -> None:
+        if "calling LLM" in msg:
+            state.log.append({"role": "user", "content": f"🤖 {msg}"})
+            push()
+
+    agent = Agent(
+        provider,
+        system_prompt=system_prompt,
+        session=session,
+        max_iterations=max_iterations,
+        max_input_tokens=max_input_tokens,
+        on_progress=on_progress,
+    )
+
+    # Wrap send_with_tools once, on this provider instance, so both
+    # `Agent.run` and `Agent.continue_chat` see the stop check + thinking hook.
+    orig_send = provider.send_with_tools
+
+    def wrapped_send(**kw):
+        if stop_event.is_set():
+            raise StopFitError("Stop requested by user")
+        response = orig_send(**kw)
+        if show_thinking and response.thinking_text:
+            state.log.append({
+                "role": "assistant",
+                "content": thinking_block(response.thinking_text),
+            })
+            push()
+        return response
+
+    provider.send_with_tools = wrapped_send  # type: ignore[method-assign]
+
+    # Wrap _invoke_tool to push UI updates after each tool dispatch.
+    orig_invoke = agent._invoke_tool
+
+    def wrapped_invoke(tc):
+        block = orig_invoke(tc)
+
+        last_turn = session.turns[-1]
+        result = last_turn.result
+        elapsed = last_turn.elapsed_s
+
+        state.log.append({
+            "role": "assistant",
+            "content": tool_event_line(tc.name, tc.args, result, elapsed),
+        })
+
+        if is_image_result(result):
+            b64 = result.get("image_base64", "")
+            if b64:
+                state.image = _b64_to_pil(b64)
+
+        sid = session.pyirena_session_id
+        if tc.name in _PARAM_CHANGING_TOOLS and sid:
+            pr = dispatch("get_model_parameters", {"session_id": sid})
+            state.params_md = params_to_markdown(pr)
+
+        cost = estimate_cost_usd(
+            session.model,
+            session.input_tokens,
+            session.output_tokens,
+        )
+        state.token_md = token_line(
+            session.input_tokens,
+            session.output_tokens,
+            cost,
+        )
+        push()
+        return block
+
+    agent._invoke_tool = wrapped_invoke  # type: ignore[method-assign]
+    return agent
+
+
+def _pump_queue(
+    thread: threading.Thread,
+    q: queue.Queue,
+    state: UIState,
+    to_tuple=lambda s: s.as_tuple(),
+) -> Generator[tuple, None, None]:
+    """Yield UI tuples from `q` until `thread` exits and the queue drains.
+
+    `to_tuple` lets callers swap between `UIState.as_tuple` (Fit, 5 outputs)
+    and `UIState.as_chat_tuple` (Chat, 6 outputs).
+    """
+    while thread.is_alive() or not q.empty():
+        try:
+            s = q.get(timeout=0.4)
+            yield to_tuple(s)
+        except queue.Empty:
+            yield to_tuple(state.clone())
+    thread.join()
+    # Final yield so the very last state is always sent.
+    yield to_tuple(state.clone())

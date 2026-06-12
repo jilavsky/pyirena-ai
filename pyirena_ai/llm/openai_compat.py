@@ -19,9 +19,19 @@ provider does two adapters:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
+
+# Magistral / other channel-style reasoning models prefix their reply with
+# <|channel>thinking text<channel|>. Extract it so the GUI / CLI can display
+# the reasoning and the user-visible reply is clean.
+_CHANNEL_RE = re.compile(r"<\|channel>(.*?)<channel\|>\s*", flags=re.DOTALL)
+
+# OpenAI o-series reasoning content lands in a separate `reasoning` /
+# `reasoning_content` response field (not in `content`) — a future addition
+# can read msg.get("reasoning") here when those endpoints are in scope.
 
 from pyirena_ai.llm.base import (
     AssistantResponse,
@@ -232,11 +242,14 @@ def _openai_response_to_assistant(data: dict) -> AssistantResponse:
     msg = choice.get("message") or {}
     finish_reason = choice.get("finish_reason") or ""
 
-    text = msg.get("content") or ""
+    raw_text = msg.get("content") or ""
+    thinking_text, text = _split_channel_thinking(raw_text)
     tool_call_dicts = msg.get("tool_calls") or []
 
     raw_content: list[dict] = []
     if text:
+        # Echo only the cleaned reply back to the model in the next turn;
+        # the channel-thinking is per-turn and should not be replayed.
         raw_content.append({"type": "text", "text": text})
 
     tool_calls: list[ToolCall] = []
@@ -269,7 +282,20 @@ def _openai_response_to_assistant(data: dict) -> AssistantResponse:
         stop_reason=stop_reason,
         usage=usage,
         raw_content=raw_content,
+        thinking_text=thinking_text,
     )
+
+
+def _split_channel_thinking(raw: str) -> tuple[str, str]:
+    """Return (thinking, cleaned_text) for a Magistral-style reply.
+
+    If `raw` contains no channel blocks, returns ("", raw).
+    """
+    if not raw or "<|channel>" not in raw:
+        return "", raw
+    thinking = "\n\n".join(m.group(1).strip() for m in _CHANNEL_RE.finditer(raw))
+    cleaned = _CHANNEL_RE.sub("", raw).strip()
+    return thinking, cleaned
 
 
 def _map_finish_reason(finish: str) -> str:

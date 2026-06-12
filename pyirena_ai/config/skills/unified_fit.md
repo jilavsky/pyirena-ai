@@ -1,171 +1,129 @@
 # Unified Fit — Parameter Reference and Residual Guide
 
-This document is a reference supplement to the fitting workflow defined in
-the strategy file. The workflow steps, ordering invariant, G validity rule,
-correlation check procedure, and low-Q completeness checks are all defined
-there. This file covers parameter physical meanings, residual pattern
-interpretation, and common mistakes.
+Reference for the Beaucage Unified Fit model. The fitting workflow,
+ordering invariant, validity rules, and mandatory checks are defined in
+the strategy file — this file is *only* for parameter meanings, residual
+shape interpretation, and level-option semantics.
 
 ## Model structure
 
-The Unified Fit (Beaucage, 1995/1996) sums levels from smallest to largest
-scale. Level 1 is the smallest structure (highest-Q, smallest Rg). Each
-level contributes a Guinier term (G, Rg) and a power-law term (B, P).
+The Unified Fit (Beaucage, 1995/1996) sums structural levels from
+smallest to largest. Level 1 is the smallest structure (highest-Q knee,
+smallest Rg). Each level contributes a Guinier term (G, Rg) and a
+power-law term (B, P), plus an optional high-Q roll-off (RgCO) and an
+optional correlation correction (ETA, PACK).
 
-The highest-numbered level often represents structures too large for their
-Guinier region to fall within the measured Q range. Set G = 0, Rg = 10¹⁰,
-fix both permanently, and fit only P and B for that level.
+The highest-numbered level often represents structures too large for
+their Guinier region to fall within the measured Q range — by convention
+this level has G = 0 and a very large fixed Rg, leaving only the
+power-law contribution.
 
-## Parameter physical meanings
+## Parameter meanings
 
-**Rg** — radius of gyration in Å. The Guinier knee appears at Q ≈ π/Rg.
-Estimate from the data before fitting: identify the Q position of each
-knee in the log-log plot and compute Rg ≈ π / Q_knee.
-- Knee at Q = 0.04 Å⁻¹ → Rg ≈ 78 Å
-- Knee at Q = 0.003 Å⁻¹ → Rg ≈ 1050 Å
-- Knee at Q = 0.001 Å⁻¹ → Rg ≈ 3140 Å
+**Rg** — radius of gyration in Å. The visible Guinier knee on a log-log
+plot is around Q·Rg ≈ 1, so `Rg ≈ 1/Q_knee` is a useful rough estimate.
+The Guinier approximation is valid for Q·Rg ≲ 1.3. Use
+`fit_local_guinier(session_id, q_min, q_max)` on a window centered on
+the knee to obtain a numerically reliable Rg — the visual estimate is
+only for choosing window boundaries.
 
-**G** — Guinier prefactor (cm⁻¹). Sets the intensity of this level at Q→0.
-Must satisfy: `5 × I_min ≤ G ≤ I_max` (measured intensity range).
+**G** — Guinier prefactor (cm⁻¹). Sets the level's intensity at Q→0.
+Obtain from `fit_local_guinier` together with Rg — never read off the
+plot. By convention the large-scale power-law level has G = 0.
 
-**Critical G-estimation rule:** The best starting estimate is the measured
-intensity at Q = 2π/Rg, which is close to the Guinier knee peak. Do NOT
-guess or use default 1 — wrong G values cause fits to diverge catastrophically.
-From the log-log data plot, find the intensity value at this Q position and
-use it directly as G_start.
-
-Exception: the large-scale power-law level has G = 0 by definition.
-
-**P** — power-law exponent (log-log slope). Start fixed at 4; free only if
-residuals show systematic slope mismatch in the power-law region.
+**P** — power-law exponent (log-log slope). Physical interpretation:
 - P = 4: smooth surface (Porod)
 - 3 < P < 4: rough surface or broad size distribution
 - P = 3: mass fractal surface or collapsed polymer
 - P < 3: mass fractal interior, polymer chains, or size distribution
 
-**B** — power-law prefactor. For smooth surfaces (P ≈ 4):
-B ≈ (1.62/Rg)⁴ × G. Enabling estimate_B automates this. B and P are
-correlated — if B hits its lower bound, P drifts to compensate.
+Obtain a starting value from `fit_local_power_law` on the linear
+power-law portion of the log-log plot (between knees, or above the
+highest-Q knee). If no clean power-law region is visible, start at P = 4.
 
-**RgCO** (RgCutoff) — high-Q exponential roll-off. Default: 0 and fixed
-for all levels. Do not change unless the data shows a hierarchical structure
-(fractal aggregate, elongated or disk-like particle). When needed:
-- RgCO_1 = 0 always (no smaller level exists)
-- RgCO_2 = current Rg_1, fixed
-- RgCO_3 = current Rg_2, fixed
-Never fit RgCO as a free parameter. The preferred way to manage RgCO for
-hierarchical structures is `set_level_option(session_id, N, "link_RGCO",
-True)`, which keeps RgCO_N automatically synchronized to Rg_(N-1) during
-fitting — no manual updates needed after each fit.
+**B** — power-law prefactor. Obtain from `fit_local_power_law` together
+with P. B and P are correlated — if B hits its lower bound, P drifts
+to compensate. For smooth surfaces (P ≈ 4) B is tied to G and Rg
+through the Porod relation; enabling `link_B` (see level options) has
+the model compute B automatically instead of fitting it freely.
 
-**ETA** — correlation distance (Å). Nearest-neighbour centre-to-centre
-distance between particles. Physical constraint: ETA ≥ 2 × Rg (particles
-cannot overlap). Before fitting ETA: set value = 3 × Rg AND set lower bound
-= 2 × Rg. Default ETA = 10 Å is wrong for any level with Rg > 50 Å.
+**RgCO** (RgCutoff) — high-Q exponential roll-off. Defaults to 0 (off)
+and should remain so unless the data shows a true hierarchical
+structure (fractal aggregate, or elongated/disc-like particle with two
+principal dimensions). When needed, RgCO_N is tied to Rg_(N-1) — the
+cleanest way to do this is `link_RGCO=True`. Never fit RgCO as a free
+parameter.
 
-**PACK** — packing factor (0–8). Strength of liquid-like ordering. Default
-0 disables the correction entirely. Set to 1 before fitting PACK.
+**ETA** — correlation distance in Å. Approximately the nearest-neighbour
+centre-to-centre distance between particles. As a soft physical floor,
+ETA should not be much smaller than ~2·Rg (near-spherical particles
+would overlap); for very anisotropic shapes a smaller ETA can still be
+physical. Default ETA = 10 Å is wrong for any level with Rg ≳ 50 Å.
 
-**ETA and PACK are needed when ANY of these signs appear:**
-1. Measured intensity drops at Q < π/Rg instead of flattening into a
-   plateau (low-Q side of the knee curves downward).
-2. The feature looks peaked/sharp rather than a broad rounded knee.
-3. Residuals show a +-+ pattern in the level's Q window (π/(2×Rg) to
-   2π/Rg): negative low-Q side, positive at the peak, negative high-Q side.
+**PACK** — packing factor (0–8). Strength of liquid-like ordering.
+Default 0 disables the correction entirely.
 
-**Critical:** ETA and PACK have NO effect unless the level's `correlations`
-boolean flag is True. Always call `set_level_option(session_id, N,
-"correlations", True)` before setting ETA/PACK values. The full procedure
-is in workflow step 8.
+**background** — flat incoherent background. Fit first, then fix.
 
-**background** — flat incoherent background. Fit first, fix once converged.
+ETA and PACK have **no effect** unless the level's `correlations` flag
+is True (see level options). Without that flag, changes to ETA or PACK
+values are silently ignored by the intensity calculation.
 
 ## Level options (boolean flags)
 
-These are separate from numeric parameters. Toggle with
-`set_level_option(session_id, level, option, enabled)` and query with
-`get_level_options(session_id, level)`. Four options exist:
+Set with `set_level_option(session_id, level, option, enabled)`. Four
+options exist:
 
-**correlations** — Enables the Born-Green liquid-like ordering correction for
-a level. **Without this flag set to True, ETA and PACK values are silently
-ignored in the intensity calculation.** Default is False (off). Must be
-explicitly enabled with `set_level_option` before the ETA/PACK fitting
-workflow has any effect.
+**correlations** — Enables the Born-Green liquid-like ordering
+correction. ETA and PACK are inactive until this is True. Default False.
 
-**link_B** — Computes B from G, Rg, and P via the Porod invariant instead of
-treating B as a free parameter. With link_B=True, B cannot be fitted. Use the
-following strategy:
-1. Before the first staged fit on any level, call
-   `set_level_option(session_id, N, "link_B", True)`. The fit is more stable
-   and converges faster with B automatically computed.
-2. Once Rg, G, and P have converged to reasonable values, call
-   `set_level_option(session_id, N, "link_B", False)` and free B for a final
-   refinement fit.
-3. If B diverges significantly after freeing, or the fit becomes unstable,
-   reset `link_B=True`. A calculated B is physically reasonable for a Porod
-   surface; extreme B values usually indicate B and P are coupled into a local
-   minimum.
+**link_B** — Computes B from G, Rg, and P via the Porod invariant
+instead of treating B as a free parameter. With `link_B=True`, B
+cannot be fitted; this removes one degree of freedom and stabilises
+early staged fits.
 
-**link_RGCO** — Automatically keeps level N's RgCO equal to the current Rg of
-level N−1. Whenever Rg_(N-1) changes (during fitting or manual assignment),
-RgCO_N follows without needing a separate `set_parameter_value` call. Enable
-only for structures with true hierarchical coupling: fractal aggregates (level
-1 = primary particle, level 2 = aggregate) or elongated/disk-like particles
-with two distinct principal dimensions. Do not enable link_RGCO for
-independent structural levels.
+**link_RGCO** — Keeps level N's RgCO synchronised to the current Rg of
+level N−1 automatically. Enable only for genuinely coupled levels
+(primary particle + fractal aggregate, or two principal dimensions of
+a non-spherical particle). Do not enable for independent structural
+levels.
 
 **mass_fractal** — Not used in this workflow; ignore.
 
 ## Residual pattern recognition
 
-**What counts as random (acceptable):** > 5 zero-crossings within the Q
-window of a Guinier feature (π/(2×Rg) to 2π/Rg), with no recognizable
-shape. High-frequency scatter around zero is noise, not misfit.
+Define each level's "feature window" as roughly `Q_knee/2` to
+`2·Q_knee`, i.e. about `1/(2·Rg)` to `2/Rg`. Count zero-crossings of
+the normalised residuals inside that window:
 
-**What counts as systematic (must fix before saving):** ≤ 3 zero-crossings
-in the feature's Q window with a recognizable shape:
+- **> 5 zero-crossings, no recognisable shape** — random scatter,
+  acceptable.
+- **≤ 3 zero-crossings with a recognisable shape** — systematic misfit
+  (see patterns below).
 
-- **+-+ pattern** (negative low-Q side, positive at peak, negative high-Q
-  side, or reversed): correlations missing — follow workflow step 8 to
-  enable ETA and PACK. Residuals of ±10–25 with this shape are not noise.
-- **Monotone slope** across the feature: P is wrong; free P.
-- **Single broad hump**: Rg is wrong or a level is missing.
-- **S-shaped (negative then positive with increasing Q)**: Rg too large.
+Common systematic shapes:
+
+- **+-+ across the knee** (negative low-Q side, positive at the peak,
+  negative high-Q side, or reversed): particle–particle correlations
+  are missing — enable `correlations` and fit ETA/PACK for that level.
+  Residuals of ±10–25 with this shape are misfit, not noise.
+- **Monotone slope across the feature**: P is wrong; free P.
+- **Single broad hump**: Rg is wrong, or a level is missing.
+- **S-shape (negative then positive with increasing Q)**: Rg too large.
 - **Inverted S-shape**: Rg too small.
-- **Systematic rise at very low Q**: missing large-scale power-law level;
-  add highest-numbered level with G = 0, Rg = 10¹⁰, fit only P and B.
-- **High residuals only at high Q**: background too low; increase it or
-  restrict Q range.
-- **High-frequency noise everywhere**: data uncertainties are under-estimated
-  (common in SAXS/USAXS data reduction) — this is acceptable if no
-  low-frequency systematic pattern is present.
+- **Systematic rise at very low Q**: a large-scale power-law level is
+  missing — add one at the high end with G = 0 and very large fixed Rg,
+  and fit only P and B for it.
+- **High residuals only at high Q**: background too low, or the upper
+  fit Q range needs restricting.
+- **High-frequency noise everywhere**: data uncertainties are
+  under-estimated (common in SAXS/USAXS reduction). Acceptable provided
+  no low-frequency systematic pattern is present.
 
-**χ² guidance:** The absolute value of χ²ᵣ is unreliable because data
-uncertainties are routinely under- or over-estimated. χ²ᵣ = 37 can be a
-good fit; χ²ᵣ = 0.5 can indicate over-fitting. Use χ²ᵣ only to compare
-consecutive fits on the same dataset. Judge quality by residual shape only.
+## χ² guidance
 
-## Common mistakes
-
-- **Fitting with default values:** Rg=10 Å, G=1, ETA=10 Å, PACK=0 are all
-  wrong defaults. Set Rg from π/Q_knee; set G from I(2π/Rg); set ETA = 3×Rg
-  with lower bound 2×Rg; set PACK = 1 — before any fit involving those
-  parameters. **Wrong G estimates cause catastrophic divergence** — estimate
-  directly from data, do not guess.
-- **Catastrophic fit divergence:** If chi² explodes or parameters diverge
-  wildly after the first fit, the initial G estimate was wrong. Re-estimate
-  each G_N from the data intensity at Q=2π/Rg_N, reset all parameters, and
-  refit.
-- **Not detecting correlation pattern:** After each fit, count zero-crossings
-  in each level's Q window. A +-+ pattern with ≤ 3 crossings means
-  correlations are needed, even if the overall fit looks reasonable.
-- **ETA below 2×Rg after fitting:** Physically impossible (particle
-  overlap). Reset ETA = 3×Rg, enforce lower bound = 2×Rg, refit.
-- **Fitting G or Rg of the large-scale power-law level:** Both must remain
-  fixed at 0 and 10¹⁰ respectively. Freeing either causes a tool error.
-- **RgCO set non-zero without justification:** Default is 0 and fixed.
-  Only set RgCO_N = Rg_(N-1) (fixed) when hierarchical structure is needed.
-- **Saving before running the correlation check and low-Q check:** Both
-  are mandatory workflow steps. Do not call save_fit until both pass.
-- **Not calling get_fit_image after every run_fit:** This updates the GUI
-  plot so the user can follow progress. Never skip it.
+The absolute value of χ²ᵣ is unreliable because SAXS/USAXS data
+uncertainties are routinely mis-estimated. χ²ᵣ = 37 can be a good fit;
+χ²ᵣ = 0.5 can indicate over-fitting. Use χ²ᵣ only to compare
+consecutive fits on the same dataset. Judge fit quality from residual
+shape.

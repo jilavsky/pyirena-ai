@@ -53,6 +53,7 @@ def build_provider(
     model: str,
     base_url: str = "",
     timeout: float = 120.0,
+    enable_thinking: bool = False,
 ) -> LLMProvider:
     """Instantiate the provider class registered under `name`."""
     try:
@@ -61,4 +62,10 @@ def build_provider(
         raise ValueError(
             f"Unknown provider {name!r}. Known: {', '.join(known_providers())}"
         ) from e
-    return cls(api_key=api_key, model=model, base_url=base_url, timeout=timeout)
+    return cls(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        timeout=timeout,
+        enable_thinking=enable_thinking,
+    )

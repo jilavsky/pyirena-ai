@@ -44,15 +44,24 @@ class AnthropicProvider(LLMProvider):
             client_kwargs["base_url"] = self.base_url
         client = anthropic.Anthropic(**client_kwargs)
 
-        response = client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            system=system,
-            tools=tools,
-            messages=messages,
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "tools": tools,
+            "messages": messages,
+        }
+        if self.enable_thinking:
+            # Extended thinking: budget_tokens must be < max_tokens. Force
+            # temperature=1 (required); top_p/top_k are not set elsewhere.
+            budget = min(2048, max(512, max_tokens - 512))
+            create_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            create_kwargs["temperature"] = 1.0
+
+        response = client.messages.create(**create_kwargs)
 
         text_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         raw_content: list[dict] = []
 
@@ -62,6 +71,8 @@ class AnthropicProvider(LLMProvider):
             btype = block_dict.get("type")
             if btype == "text":
                 text_parts.append(block_dict.get("text", ""))
+            elif btype == "thinking":
+                thinking_parts.append(block_dict.get("thinking", ""))
             elif btype == "tool_use":
                 tool_calls.append(
                     ToolCall(
@@ -80,4 +91,5 @@ class AnthropicProvider(LLMProvider):
                 output_tokens=response.usage.output_tokens,
             ),
             raw_content=raw_content,
+            thinking_text="\n\n".join(p for p in thinking_parts if p),
         )

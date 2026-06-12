@@ -79,6 +79,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_fit.add_argument("--context", default="",
                        help="One-shot context for this fit (sample description, "
                             "expected structure, etc.). Appended to the system prompt.")
+    p_fit.add_argument("--no-strategy", action="store_true",
+                       help="Drop the fitting strategy from the system prompt "
+                            "(diagnostic — useful for seeing how an agent behaves "
+                            "with only tool descriptions + expert skills).")
+    p_fit.add_argument("--no-skills", action="store_true",
+                       help="Drop the bundled expert-skills block from the system "
+                            "prompt (diagnostic — same idea as --no-strategy).")
+    p_fit.add_argument("--show-thinking", action="store_true",
+                       help="Enable model reasoning when supported (Anthropic "
+                            "extended thinking; Magistral channel-blocks). "
+                            "Prints reasoning to stdout before each turn's text.")
     p_fit.add_argument("--verbose", "-v", action="store_true",
                        help="Stream agent progress to stderr.")
     p_fit.set_defaults(func=cmd_fit)
@@ -205,6 +216,8 @@ def cmd_fit(args: argparse.Namespace) -> int:
         strategy_text,
         tool_name="unified_fit",
         extra_context=args.context,
+        include_strategy=not args.no_strategy,
+        include_skills=not args.no_skills,
     )
 
     progress = (lambda msg: print(msg, file=sys.stderr)) if args.verbose else None
@@ -214,6 +227,7 @@ def cmd_fit(args: argparse.Namespace) -> int:
         api_key=api_key,
         model=model_id,
         base_url=base_url,
+        enable_thinking=args.show_thinking,
     )
 
     save_out = args.save_out or str(input_path)
@@ -230,6 +244,20 @@ def cmd_fit(args: argparse.Namespace) -> int:
 
     prov_defaults = agent_defaults(args.provider)
     max_iter = args.max_iterations or prov_defaults["max_iterations"]
+
+    if args.show_thinking:
+        # Print each turn's reasoning to stdout above the visible text.
+        _orig_send = provider.send_with_tools
+
+        def _send_with_thinking_print(**kw):
+            resp = _orig_send(**kw)
+            if resp.thinking_text:
+                print("\n[thinking]")
+                print(resp.thinking_text)
+                print("[/thinking]\n")
+            return resp
+
+        provider.send_with_tools = _send_with_thinking_print  # type: ignore[method-assign]
 
     agent = Agent(
         provider,
