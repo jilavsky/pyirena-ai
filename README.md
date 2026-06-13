@@ -2,7 +2,7 @@
 
 **AI-driven SAXS/USAXS fitting on top of [pyirena](https://github.com/jilavsky/pyirena).**
 
-Status: **alpha — Phase 1 (headless CLI)**
+Status: **alpha — Phase 1–3 complete, Phase 4 in progress**
 
 `pyirena-ai` is a separate, opt-in package that lets a large language model
 autonomously fit small-angle scattering datasets using the analysis machinery
@@ -124,11 +124,12 @@ configured a key there, this tool picks it up automatically.
 
 | Phase | Scope | State |
 |-------|-------|-------|
-| 1 | Headless CLI, single file, Unified Fit, 4 providers, audit trail | in progress |
-| 2 | Minimal GUI (Gradio spike) | planned |
-| 3 | Folder/batch mode + watcher | planned |
-| 4 | Distribution polish (keyring UX, cost guardrails, more models) | planned |
-| 5 | Strategy library (saveable, sharable fitting playbooks) | planned |
+| 1 | Headless CLI, single file, Unified Fit, 4 providers, audit trail | ✅ done |
+| 2 | Gradio GUI — Fit tab (one-shot), Chat tab (multi-turn), provider/model switching | ✅ done |
+| 3 | Strategy + skills system (markdown-based, runtime-reloadable), extended thinking support | ✅ done |
+| 4 | Local model support (LMStudio/Ollama, vision, tool-use, long timeouts), UX polish | in progress |
+| 5 | Folder/batch mode + watcher | planned |
+| 6 | Distribution polish (PyPI packaging, cost guardrails, broader model testing) | planned |
 
 See [planning/ai-agent/02-standalone-ai-app.md](planning/ai-agent/02-standalone-ai-app.md)
 for full detail and [planning/ai-agent/00-overall-plan.md](planning/ai-agent/00-overall-plan.md)
