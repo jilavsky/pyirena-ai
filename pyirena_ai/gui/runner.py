@@ -117,11 +117,13 @@ class GradioRunner:
             base_url  = base_url  or prov_cfg.base_url
             api_key   = get_api_key(provider_name)
 
+            timeout = 600.0 if provider_name in {"lmstudio", "ollama"} else 120.0
             provider = build_provider(
                 provider_name,
                 api_key=api_key,
                 model=model_id,
                 base_url=base_url,
+                timeout=timeout,
             )
 
             # ---- load strategy + skills + user instructions ---------------
