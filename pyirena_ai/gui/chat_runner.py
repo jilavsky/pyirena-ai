@@ -56,6 +56,7 @@ class ChatRunner:
         self._agent: Optional[Agent] = None
         self._state: UIState = UIState(status="idle")
         self._file_path: str = ""
+        self._session_params: dict = {}  # Store params for reload_system_prompt()
 
     # ------------------------------------------------------------------ control
 
@@ -157,6 +158,12 @@ class ChatRunner:
                 system_prompt=system_prompt,
             )
             self._file_path = file_path
+            self._session_params = {
+                "strategy": strategy,
+                "user_context": user_context,
+                "include_strategy": include_strategy,
+                "include_skills": include_skills,
+            }
 
             # Open the dataset directly (no LLM round-trip — we know the path).
             import time
@@ -325,6 +332,41 @@ class ChatRunner:
             self._state.chat_messages.append({"role": "assistant", "content": err})
             self._state.log.append({"role": "assistant", "content": err})
             push("error")
+
+    # ------------------------------------------------------------------ reload
+
+    def reload_system_prompt(self) -> str:
+        """Reload strategy and skills files, rebuild system prompt.
+
+        Returns a status message. Call this when .md files have changed
+        to apply updates without restarting the session.
+        """
+        if self._agent is None or self._session is None:
+            return "⚠ No active session — start a session first."
+
+        try:
+            params = self._session_params
+            strategy = params.get("strategy", "")
+            user_context = params.get("user_context", "")
+            include_strategy = params.get("include_strategy", True)
+            include_skills = params.get("include_skills", True)
+
+            strategy_text = load_strategy(strategy) if include_strategy else ""
+            system_prompt = build_system_prompt(
+                strategy_text,
+                tool_name="unified_fit",
+                extra_context=user_context,
+                include_strategy=include_strategy,
+                include_skills=include_skills,
+            )
+
+            self._agent.system_prompt = system_prompt
+            self._session.system_prompt = system_prompt
+            return f"✓ System prompt reloaded (strategy: {strategy})"
+        except KeyError as e:
+            return f"⚠ Strategy not found: {e}"
+        except Exception as e:
+            return f"❌ Error reloading: {e}"
 
     # ------------------------------------------------------------------ end
 

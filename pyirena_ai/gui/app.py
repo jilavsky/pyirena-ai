@@ -236,7 +236,9 @@ def build_app():
                             chat_start_btn = gr.Button("▶ Start session", variant="primary")
                             chat_end_btn   = gr.Button("⏹ End session", variant="stop")
 
-                        chat_stop_btn = gr.Button("⏸ Stop current turn", variant="secondary")
+                        with gr.Row():
+                            chat_stop_btn = gr.Button("⏸ Stop current turn", variant="secondary", scale=3)
+                            chat_reload_btn = gr.Button("🔄 Reload strategy/skills", scale=2)
                         chat_status = gr.Textbox(
                             label="Status",
                             value="idle",
@@ -431,6 +433,21 @@ def build_app():
 
         chat_stop_btn.click(
             fn=on_chat_stop,
+            inputs=[chat_runner_state],
+            outputs=[],
+        )
+
+        def on_chat_reload(runner):
+            if runner is None:
+                return
+            msg = runner.reload_system_prompt()
+            runner._state.log.append({
+                "role": "assistant",
+                "content": msg,
+            })
+
+        chat_reload_btn.click(
+            fn=on_chat_reload,
             inputs=[chat_runner_state],
             outputs=[],
         )
