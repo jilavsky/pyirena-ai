@@ -133,6 +133,12 @@ def build_system_prompt(
                 "\n## Expert fitting guidance\n\n" + skills
             )
 
+        visual = load_skills("saxs_visual_patterns").strip()
+        if visual:
+            parts.append(
+                "\n## Visual pattern reference\n\n" + visual
+            )
+
     user_instr = load_user_instructions().strip()
     if user_instr:
         parts.append(
