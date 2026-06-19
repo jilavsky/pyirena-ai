@@ -7,24 +7,14 @@ a short report.
 
 ## Background
 
-The Unified Fit (Beaucage formalism) sums hierarchical scattering levels
-of a Guinier term (`Rg`, `G`) and a power-law term (`B·Q^-P`) per level,
-plus a shared flat `background`. Parameter names are level-suffixed:
-`Rg_1`, `G_1`, `P_1`, `B_1`, …, plus `background`. Most SAXS/USAXS data
-needs 1–5 levels. See the `unified_fit` skill for parameter physics and
-residual-pattern interpretation. Most data will also include flat incoherent 
-background and low-q power law slope.  
+The Unified Fit (Beaucage formalism) sums hierarchical scattering levels of
+Guinier and power-law terms per level, plus a shared background. See the
+`unified_fit` skill for model structure, parameter meanings, residual patterns,
+and how to recognize data components. Most SAXS/USAXS data needs 1–5 levels.
 
-**Judge fit quality with `get_fit_quality`, not raw χ²ᵣ.** SAXS/USAXS
-uncertainties are routinely mis-estimated, so absolute `reduced_chi_squared`
-is not a meaningful target. `get_fit_quality(session_id)` returns
-σ-scale-independent diagnostics — `robust_scale_s` (how mis-scaled σ are),
-`realistic_reduced_chi2_floor` (the best χ²ᵣ the data can support),
-`max_abs_frac_misfit` (σ-independent gross-misfit backstop), `n_outliers_3s`,
-residual-structure metrics, and a per-Q-band breakdown. See the `unified_fit`
-skill for field meanings and "Judging fit quality" below for the decision
-rules. Use raw χ²ᵣ only to compare consecutive fits on the same dataset, and
-always cross-check residual shape and the log-log image.
+**Quality judgment:** Use `get_fit_quality(session_id)` after every global fit
+to evaluate progress. See the skill's "Judging fit quality" section for field
+reference; apply the decision rules in §Judging fit quality below.
 
 ## Invariants — verify after every `run_fit`
 
@@ -230,25 +220,12 @@ levels — remove one.
    parameters for every level, not implied/fixed ones). Run `run_fit` →
    `get_fit_image` and `get_fit_quality` → verify invariants again.
 
-   **8.3 — Correlation check (mandatory).**
-   Call `get_residuals(session_id)`. For each level N, examine residuals in
-   its feature window (`Q ≈ 1/(2·Rg_N)` to `2/Rg_N`):
-   - **> 5 zero-crossings, no shape**: random, acceptable.
-   - **± + pattern (low-Q negative, peak positive, high-Q negative, or
-     reversed)**: particle–particle correlations are missing. Execute in order:
-     1. `set_level_option(session_id, N, "correlations", True)` — **required;
-        without this, ETA and PACK are silently ignored.**
-     2. `set_parameter_value(session_id, "ETA_N", 3·Rg_N)`.
-     3. `set_parameter_bounds(session_id, "ETA_N", lo=2.5·Rg_N)` —
-        **mandatory** to prevent the optimizer from drifting ETA to
-        non-physical small values.
-     4. `set_parameter_value(session_id, "PACK_N", 2)`.
-     5. `fix_all_except(["ETA_N", "PACK_N"])` → `run_fit` → verify
-        invariant 4 (ETA_N ≥ 2·Rg_N).
-     6. Global fit with correlations: `fix_all_except(free_list ∪ ["ETA_N",
-        "PACK_N"])` → `run_fit` → `get_residuals` → confirm ± + pattern is
-        gone.
-   - `get_fit_image` after each fit.
+   **8.3 — Correlation check.** `get_residuals`: if any level shows ±+ across
+   its feature window, enable correlations: `set_level_option(N, "correlations",
+   True)` → `set_parameter_value("ETA_N", 3·Rg_N)` →
+   `set_parameter_bounds("ETA_N", lo=2.5·Rg_N)` → `set_parameter_value("PACK_N",
+   2)` → `fix_all_except(["ETA_N", "PACK_N"])` → `run_fit`. Then global fit with
+   `free_list ∪ ["ETA_N","PACK_N"]`. `get_residuals` to confirm ±+ is gone.
 
    **8.4 — Low-Q completeness check (mandatory).**
    Call `get_residuals(session_id)` and inspect the 5–10 lowest-Q points.
@@ -262,23 +239,14 @@ levels — remove one.
    inspection.** Example: Rg_1 = 71 Å → Q_knee ≈ 0.014 Å⁻¹; Q_min =
    1.4×10⁻⁴ Å⁻¹: `decades_below = log10(0.014/0.00014) ≈ 2.0 >> 0.5`.
 
-   **Check 2 — Residuals (confirmatory):** All five lowest-Q residuals are
-   positive AND any exceed +5 → model is missing low-Q intensity.
+   **Check 2 — Residuals (confirmatory):** Lowest-Q residuals are all positive
+   AND exceed +5, or `get_fit_quality`'s `max_abs_frac_misfit` > 0.3 near Q_min
+   → model is missing low-Q intensity.
 
-   **Corrective action (either check fails):**
-   1. `add_unified_level(session_id, position=-1)` to create the new
-      level N.
-   2. Set `Rg_N = 1e10`, `G_N = 0` (use `set_parameter_bounds(..., hi=1e12)`
-      first if needed). Fix both permanently — never free them.
-   3. Estimate `P_N` and `B_N` with `fit_local_power_law`:
-      - `q_min = Q_data_min`
-      - `q_max = 0.2 / Rg_1` (keeps the window well below where Level 1's
-        Guinier contamination begins; reduces q_max further if the
-        low-Q plot curves upward within this window).
-   4. Apply P_N and B_N. Free P and B only; run staged fit, then include
-      in the next global fit.
-   5. Re-run this section (correlation + low-Q checks) and step 8.2
-      (global fit).
+   **If either check fails:** `add_unified_level(position=-1)`, set
+   `Rg_N = 1e10, G_N = 0` (fixed forever), estimate `P_N, B_N` with
+   `fit_local_power_law(q_min=Q_min, q_max=0.2/Rg_1)`, apply, then re-run
+   global fit. Re-run this section and 8.2.
 
 9. **Feasibility check — mandatory before saving.**
    Call `check_level_feasibility(session_id)` after the final global fit
@@ -333,60 +301,36 @@ levels — remove one.
 
 ## Judging fit quality
 
-After every global `run_fit`, call `get_fit_quality(session_id)` alongside
-`get_fit_image`. Apply these rules — they protect against both over-fitting
-and missing real misfits:
+After every `run_fit`, call `get_fit_quality(session_id)`. See the skill's
+"Judging fit quality" for field reference. Apply these thresholds:
 
-**Fit is as good as the data allows — STOP (do not chase a lower χ²ᵣ)** when
-ALL hold:
-- `reduced_chi2` ≈ `realistic_reduced_chi2_floor` (within ~30%): the χ² is
-  explained by mis-scaled σ (`robust_scale_s`), not by misfit;
-- `max_abs_frac_misfit` < 0.15 (model within ~15% everywhere);
-- `n_outliers_3s` ≈ 0 (`frac_outliers_3s` < ~0.01);
-- no residual structure: `longest_same_sign_run` short, and no single band's
-  `reduced_chi2` far above the others.
+**STOP — fit is as good as data allows** when ALL hold:
+- `reduced_chi2 ≈ realistic_reduced_chi2_floor` (within ~30%)
+- `max_abs_frac_misfit < 0.15`
+- `n_outliers_3s ≈ 0`
+- short `longest_same_sign_run`, no hot band
 
-**A real misfit remains — KEEP WORKING** (add/adjust a level or enable
-correlations) when ANY holds:
-- `max_abs_frac_misfit` ≳ 0.3 → gross local misfit at `q_at_max_frac_misfit`;
-  fix the feature at that Q.
-- `n_outliers_3s` > 0 with large `max_abs_frac_misfit` → genuine outliers
-  beyond the actual noise.
-- one band's `reduced_chi2` ≫ the others → localized misfit in that Q-band.
-- long `longest_same_sign_run` / high `sign_autocorr_lag1` → wrong functional
-  form, even at modest magnitude (free P, reset Rg, or add a level).
+**KEEP WORKING — real misfit** when ANY holds:
+- `max_abs_frac_misfit ≥ 0.3` at `q_at_max_frac_misfit`
+- `n_outliers_3s > 0` with large `max_abs_frac_misfit`
+- one band's `reduced_chi2 ≫` the others
+- long sign-runs or high autocorrelation
 
-**Over-fitting — BACK OFF:** `robust_scale_s` ≲ 0.5 while you are still
-freeing parameters → you are fitting noise; reduce free parameters or levels.
-
-**If `sigma_available` is False** (no usable σ): `robust_scale_s` and χ² are
-null — judge solely by `max_abs_frac_misfit` / `frac_residual` and residual
-structure.
-
-A normalised residual of 20–50 is never automatically "fine": with σ at a few
-% it means the model is ~100% off (M ≈ 0). Trust `max_abs_frac_misfit` and
-`n_outliers_3s` over any hand-wave about unreliable σ.
+**BACK OFF — over-fitting** if `robust_scale_s ≲ 0.5` while still freeing.
 
 ## Stopping criteria
 
-The workflow (steps 8.1–8.4) enforces invariants and completeness checks.
-Stop building the model when **any** of these is true:
+Stop when **any** hold:
+- All invariants + 8.3/8.4 checks pass + `get_fit_quality` STOP rule → proceed
+  to feasibility check (step 9).
+- χ² stable (< 5% change) + `get_fit_quality` shows no misfit signal → done.
+  If misfit signal remains, add/adjust a level, don't stop.
+- ≥ 8 total fits with no improvement.
+- Tool error (file missing, bad model) — surface it.
 
-- All four invariants hold AND `get_fit_quality` meets the "as good as the
-  data allows" rule above AND steps 8.3 (correlations) and 8.4 (low-Q
-  completeness) pass — proceed to step 9 (feasibility check).
-- `reduced_chi2` changed by less than 5% between two consecutive fits with the
-  same free-parameter set AND `get_fit_quality` shows no remaining misfit
-  signal (no 3s outliers, `max_abs_frac_misfit` < 0.15, no hot band) —
-  converged; stop. If it has converged but a misfit signal *remains*, the
-  model is inadequate — change strategy (add/adjust a level), don't stop.
-- ≥ 8 total `run_fit` calls with no improvement.
-- A tool error indicates a fundamental issue (file missing, bad model
-  selection) — surface it as the final response.
+## Final message
 
-Bound iteration: ≤ 3 staged fits per level. Raw χ²ᵣ alone is never sufficient
-to declare done: a `reduced_chi2` of 37 with `robust_scale_s` ≈ 6,
-`max_abs_frac_misfit` < 0.15 and no structure is fine (σ ~6× under-estimated);
-the same χ²ᵣ with `n_outliers_3s` > 0 or `max_abs_frac_misfit` ≳ 0.3 at low Q
-means a level is missing.
+File, level count, final χ²ᵣ (with `robust_scale_s` + `realistic_reduced_chi2_floor`
+for interpretability), key parameters, `max_abs_frac_misfit` + its Q, residual
+cleanliness.
 
