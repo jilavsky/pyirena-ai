@@ -27,14 +27,28 @@ Guinier region to fall within the measured Q range — by convention this
 level has G = 0 and a very large fixed Rg, leaving only the power-law
 contribution.
 
+## Locating features with `detect_features`
+
+`detect_features(session_id)` segments the I(Q) curve in log-log space and is the preferred starting point for finding knees and fitting windows. Its power-law slopes/ranges are reliable; its Guinier-knee *centers* are good estimates but the suggested *widths* are often too narrow, so re-derive the local-Guinier window from the knee center (minimum `[Q_knee/2, 2·Q_knee]`). If the two Guinier levels are too close (Rg,n+1​/Rg,n​ < 3), remove the power-law segment in between and replace with one Guinier level centered on average of the two `Q_knee`.   
+Any knee it reports already satisfies the steep→shallow physical constraint
+(`|slope_low_q| < |slope_high_q|`). It is ~90% reliable — confirm visually:
+it can miss the background level, lump two close levels into one broad knee,
+and report structure-factor peaks as knees. It also does **not** find
+*implied* Guinier levels (a steeper low-Q power-law meeting a shallower
+high-Q one, with no fittable plateau) — those are estimated from the slopes
+with `link_B`; see the strategy's implied-Guinier-levels note.
+
 ## Parameter meanings
 
-**Rg** — radius of gyration in Å. The visible Guinier knee on a log-log
-plot is near Q·Rg ≈ 1, so `Rg ≈ 1/Q_knee` is a useful rough estimate
-for choosing a fitting window. The Guinier approximation is valid for
-Q·Rg ≲ 1.3. Use `fit_local_guinier(session_id, q_min, q_max)` on a
-window centred on the knee to obtain a numerically reliable Rg — the
-visual estimate is only for choosing the window boundaries.
+**Rg** — radius of gyration in Å. Identify the Guinier region by finding
+a **near-flat (slope ≈ 0) plateau** on the log-log plot. The Guinier
+knee is the HIGH-Q boundary of that plateau — where the curve transitions
+into steeper power-law decay. `Rg ≈ 1/Q_knee` is a rough estimate for
+choosing a fitting window. **A slope change from steep to less steep is
+not a knee** — it is a larger structure's power-law blending into the
+next level; the genuine plateau (slope ≈ 0) lies at higher Q. Use
+`fit_local_guinier(session_id, q_min, q_max)` on a window bracketing
+the flat region to obtain a reliable Rg.
 
 **G** — Guinier prefactor (cm⁻¹). Sets the level's intensity at Q → 0.
 Obtain from `fit_local_guinier` together with Rg — do not read off the
@@ -127,12 +141,45 @@ Common systematic shapes:
   under-estimated (common in SAXS/USAXS reduction). Acceptable provided
   no low-frequency systematic pattern is present.
 
-## χ² guidance
+## Judging fit quality — `get_fit_quality`
 
-The absolute value of χ²ᵣ is unreliable because SAXS/USAXS data
-uncertainties are routinely mis-estimated. χ²ᵣ = 5 can be a good fit;
-χ²ᵣ = 0.5 can indicate over-fitting. Use χ²ᵣ only to compare consecutive
-fits on the same dataset. Judge fit quality from residual shape.
+`get_fit_quality(session_id)` is the preferred quality judge. Reported σ in
+SAXS/USAXS are routinely mis-estimated, so the absolute value of `reduced_chi2`
+(and `get_chi_squared`) is not a reliable target — chasing χ²ᵣ ≈ 1 wastes
+effort, and blindly dismissing a high χ²ᵣ hides real misfits. `get_fit_quality`
+returns σ-scale-independent diagnostics that resolve both. It reports facts
+only; the decision thresholds live in the strategy.
+
+Fields and what they mean:
+
+- **`robust_scale_s`** — MAD-based estimate of how many times the actual
+  point-to-point scatter exceeds the reported σ. s ≈ 1: σ honest. s ≈ 3:
+  σ ~3× too small, so a `reduced_chi2` of ~9 is the *best achievable* — this
+  is **`realistic_reduced_chi2_floor`** (= s²). When `reduced_chi2 ≈
+  realistic_reduced_chi2_floor`, the χ² is fully explained by mis-scaled σ,
+  not by misfit — do not try to push it lower.
+- **`max_abs_frac_misfit`** (+ **`q_at_max_frac_misfit`**) — largest
+  |(I−M)/I|, completely independent of σ. The gross-misfit backstop: 0.3 means
+  the model is 30% off the data at that Q — a real local misfit no matter how
+  unreliable σ is. (This is why a normalised residual of 20–50 is never
+  automatically "fine": with σ at a few % it implies the model is ~100% off,
+  i.e. M ≈ 0.)
+- **`n_outliers_3s`** / **`frac_outliers_3s`** — points beyond
+  3·robust_scale_s, i.e. genuine outliers *after* accounting for a mis-scaled
+  σ. A handful among otherwise-tight residuals = localized misfit, not noise.
+- **`longest_same_sign_run`** / **`sign_autocorr_lag1`** — structure in the
+  residual sequence. Long runs / high autocorrelation signal a wrong
+  functional form (systematic), distinct from a pure σ-scale problem, even
+  when magnitudes are modest.
+- **`bands`** — the same metrics per Q-decade. One band's `reduced_chi2` far
+  above the others localizes the misfit in Q; uneven bands are themselves a
+  misfit signal.
+
+`get_residuals` complements this: besides the normalised residual it also
+returns `rescaled_residual` (r / robust_scale_s — scatter vs. the data's own
+noise floor) and `frac_misfit_percent` ((I−M)/I in %). Use the residual
+*shape* patterns above for diagnosis and `get_fit_quality` scalars for the
+stop/continue decision.
 
 ## Low-Q power-law slope
 
