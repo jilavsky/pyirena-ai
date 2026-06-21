@@ -32,6 +32,8 @@ reference; apply the decision rules in §Judging fit quality below.
    `ETA_N ≥ 2·Rg_N`. ETA below that is non-physical particle overlap.
    If violated, reset `ETA_N = 3·Rg_N`, enforce `lo = 2·Rg_N` via
    `set_parameter_bounds`, and refit.
+5. **RgCO rule** Level 2 and higher, with `P < 3` must have `link_RGCO=True`, 
+   with `P > 3.9` must have `link_RGCO=False` and `RGCO = 0`. 
 
 If invariant 1 fails: read `get_model_parameters`, manually reset the
 offending `Rg_N` with `set_parameter_value` so ordering is restored,
@@ -54,9 +56,9 @@ levels — remove one.
    `background_q_min`, and `recommended_nlevels`. It does **not** touch the
    model. Reliability from field experience is ~90%; weight its outputs
    accordingly:
-   - **Power-law segments and slopes — reliable.** Use `segments` of kind
+   - **Power-law segments and slopes** Use `segments` of kind
      `power_law` directly for P starting values and Q ranges for
-     `fit_local_power_law` fitting.
+     `fit_local_power_law` fitting. 
    - **Guinier knees — good center, unreliable width.** A knee's
      `q_center` is a good starting estimate for `Q_knee`, but the returned
      window is sometimes too narrow, occasionally too wide. Always re-derive
@@ -65,10 +67,10 @@ levels — remove one.
      `fit_local_guinier`.
    - **`background_q_min`** seeds the background level and the high-Q trim.
      If the detector misses the background, use visual inspection (average
-     of the last 5 data points is a starting estimate) to set it.
-   - **Level count (starting estimate):** a good initial guess is the number
-     of identified power-law segments, but verify and adjust this visually
-     before model selection.
+     of the last 5 data points is a starting estimate) to set it. 
+   - **Level count (starting estimate):** After corrections above it is a good 
+     initial guess is the number of identified power-law segments, but verify 
+     and adjust this visually before model selection. 
 
    `detect_features` is a hypothesis, not ground truth — always confirm it
    against `get_fit_image`. Known failure modes to check for visually:
@@ -79,7 +81,13 @@ levels — remove one.
    - Structure-factor **peaks** are reported as knees (`feature_type` is
      always `"knee"`; there is no peak detection). Handle peaks via the
      visual branch below.
-   - A missed background level, or an occasional spurious narrow segment.
+   - Occasional spurious narrow segment.
+   - A missed background level - if the `slope > -1` for the first (high Q) 
+     `segment` it is misidentified `background`. Reduce number of segments 
+     and treat as background. 
+   - If the `slope > -1` for the last (low Q) `segment` it is misidentified, 
+     it is `Guiner plateau` which is part of the `Guiner knee` at higher Q vales. 
+     Reduce number of segments. 
 
    **6.1 — Visual cross-check.** On the log-log image, scan high-Q → low-Q
    and visually confirm or correct the detector's map. Levels and features
@@ -116,6 +124,9 @@ levels — remove one.
    - **low-q power law slope**: the large-scale power-law level
      — `G = 0`, `Rg = 10^10`, fixed (no Guinier fit needed).
 
+   **Model maximum Q range** Unified fit model cannot model data at `Q > 0.6`. 
+   Limit `Qmax > 0.6` for fitting and evaluate if data extend above. 
+   
    **Minimum-width rule for Guinier fitting:** A Guinier knee is a broad
    feature spanning at least `[Q_knee/2, 2·Q_knee]` (≈0.6 log-decades).
    The detector's suggested window is often narrower; do not fit on a
@@ -128,14 +139,14 @@ levels — remove one.
    separate levels; the fit is unphysical (ordered Rg ratio < 3).
 
    **Reconcile the level count:** start from the number of identified and
-   implied Guinier knees, plus 1 for any low-Q power-law slope level
-   (G=0, Rg=1e10). Cross-check this count against your visual map; the
+   implied Guinier knees. Cross-check this count against your visual map; the
    visual count is authoritative.
 
 7. **Staged fitting — level by level, with starting values and link_B.**
 
-   **7.0 — Initialize.** Set `select_model(session_id, model_name="unified_fit",
-   nlevels=N)` where N is the visually-confirmed level count from step 6.1.
+   **7.0 — Initialize.** Add levels in the model sequentially, starting from 
+   the high Q. Set `select_model(session_id, model_name="unified_fit",
+   nlevels=1)`. 
    Set `background` to the estimate from step 6 (or the average of the last
    5 data points if missing). Do not fit yet.
 
@@ -146,6 +157,7 @@ levels — remove one.
      (or above all structure if no knee). Call
      `fit_local_power_law(session_id, q_min_powerlaw, q_max_powerlaw)` to
      estimate `P` and `B`. Apply these with `set_parameter_value`.
+   - **RgCO for Level 1** `RgCO = 0` and `link_RGCO=False` for Level 1.  
 
    **Set Guinier parameters — three cases:**
    - **Identified Guinier knee** (flat plateau visible): Call
@@ -168,17 +180,22 @@ levels — remove one.
      `run_fit` → verify. (Rg and B are fixed/linked; refined in global fit.)
    - No knee: `fix_all_except(["background", "P_1", "B_1"])` → `run_fit` →
      verify, then proceed directly to step 8.
+  
+  Show user the data with plot. 
 
    **7.2 — Higher levels (Level 2, 3, …).**
 
    For each additional level N (2, 3, …) in order:
+
+   **Add new level** add additonal level into the model as higher level number.  
+   Do not add all at once, add one-by-one. 
 
    **Set power-law parameters:**
    - Identify the power-law region between Level N's knee and Level N−1's
      knee (or between the knee and minimum Q for the last level). Call
      `fit_local_power_law(session_id, q_min_powerlaw, q_max_powerlaw)` to
      estimate `P_N` and `B_N`. Apply these.
-   - If `P_N < P_(N-1)`, set `link_RGCO` for Level N−1 to True (the levels
+   - If `P_N < P_(N-1)`, set `link_RGCO=True` for Level N−1 (the levels
      may have hierarchical structure where an RgCO roll-off is needed).
      This can be relaxed later if fitting shows it unnecessary.
 
