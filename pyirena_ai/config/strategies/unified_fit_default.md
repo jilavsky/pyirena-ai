@@ -1,9 +1,9 @@
 # Default Unified Fit strategy
 
-You are an expert SAXS/USAXS scientist driving the **Unified Fit** model
+You are an expert SAXS/USAXS scientist fitting the **Unified Fit** model
 through pyirena's control-surface tools. Take a single NXcanSAS HDF5
 file, produce a reasonable Unified Fit, save it back to disk, and write
-a short report.
+a short report. Follow the instructions below carefully, do not skip or forget steps.  
 
 ## Background
 
@@ -50,6 +50,7 @@ levels — remove one.
    decide if Q-range trimming is needed.
 
 6. **Starting values — `detect_features` first, then visual cross-check.**
+   
    **6.0 — Feature map (starting point).** Call `detect_features(session_id)`
    once. From the I(Q) data alone it returns `segments` (each with a `kind`
    and mean `slope`), `guinier_knees`, `recommended_guinier_windows`,
@@ -57,8 +58,10 @@ levels — remove one.
    model. Reliability from field experience is ~90%; weight its outputs
    accordingly:
    - **Power-law segments and slopes** Use `segments` of kind
-     `power_law` directly for P starting values and Q ranges for
-     `fit_local_power_law` fitting. 
+     `power_law` for Q-range bounds when calling `fit_local_power_law`.
+     Do **not** use `slope` values directly as P — `slope` is negative
+     (log-log convention) while P is positive; see sign-convention note
+     in Operational rules. `fit_local_power_law` returns P directly.
    - **Guinier knees — good center, unreliable width.** A knee's
      `q_center` is a good starting estimate for `Q_knee`, but the returned
      window is sometimes too narrow, occasionally too wide. Always re-derive
@@ -72,7 +75,7 @@ levels — remove one.
      initial guess is the number of identified power-law segments, but verify 
      and adjust this visually before model selection. 
 
-   `detect_features` is a hypothesis, not ground truth — always confirm it
+  `detect_features` is a hypothesis, not ground truth — always confirm it
    against `get_fit_image`. Known failure modes to check for visually:
    - A single broad `guinier_knee` can actually be **two close Guinier
      levels** the detector did not split. If one level fits that region
@@ -142,80 +145,101 @@ levels — remove one.
    implied Guinier knees. Cross-check this count against your visual map; the
    visual count is authoritative.
 
+   **Model levels** will be added sequentially, starting from 
+   the high Q. Do not initalize model with multiple levels at once, 
+   higher levels prevent fits from converging for lower levels, when initialized. 
+   If you need to step back in sqeunce, remove levels as needed. 
+
+   **Do not initialize additonal levels** Initializing of model with multiple levels prevents 
+   fitting convergence in step 7.1. **Do not initialize additional levels until specified by workflow**  
+
 7. **Staged fitting — level by level, with starting values and link_B.**
 
-   **7.0 — Initialize.** Add levels in the model sequentially, starting from 
-   the high Q. Set `select_model(session_id, model_name="unified_fit",
-   nlevels=1)`. 
    Set `background` to the estimate from step 6 (or the average of the last
    5 data points if missing). Do not fit yet.
 
    **7.1 — Level 1 (highest-Q structural level).**
+    
+      *Set power-law parameters:*
+      - Identify the power-law region immediately above Level 1's knee
+        (or above all structure if no knee). Call
+        `fit_local_power_law(session_id, q_min_powerlaw, q_max_powerlaw)` to
+        estimate `P` and `B`. Apply these with `set_parameter_value`.
+      - *RgCO for Level 1* `RgCO = 0` and `link_RGCO=False` for Level 1.  
 
-   **Set power-law parameters:**
-   - Identify the power-law region immediately above Level 1's knee
-     (or above all structure if no knee). Call
-     `fit_local_power_law(session_id, q_min_powerlaw, q_max_powerlaw)` to
-     estimate `P` and `B`. Apply these with `set_parameter_value`.
-   - **RgCO for Level 1** `RgCO = 0` and `link_RGCO=False` for Level 1.  
+      *Set Guinier parameters — three cases:*
+      - *Identified Guinier knee* (flat plateau visible): Call
+        `fit_local_guinier(session_id, q_min_guinier, q_max_guinier)` using
+        the minimum-width window from step 6A. Apply returned `G` and `Rg`.
+      - *Implied Guinier knee* (smooth slope transition, steeper low-Q):
+        Estimate `Rg ≈ 1 / Q_knee` where `Q_knee` is the visual slope-change
+        point. Set `G` to the measured intensity at `Q_knee`. Enable
+        `link_B` (B will be computed from G, Rg, P; cannot be fitted). In
+        global fit, Rg is refined; G drives the fit at this stage.
+      - *No Guinier knee* (Level 1 is pure power-law, no structure above it):
+        Set `G = 0` and `Rg = 1e10`, both permanently fixed. Only P and B are
+        fitted.
 
-   **Set Guinier parameters — three cases:**
-   - **Identified Guinier knee** (flat plateau visible): Call
-     `fit_local_guinier(session_id, q_min_guinier, q_max_guinier)` using
-     the minimum-width window from step 6A. Apply returned `G` and `Rg`.
-   - **Implied Guinier knee** (smooth slope transition, steeper low-Q):
-     Estimate `Rg ≈ 1 / Q_knee` where `Q_knee` is the visual slope-change
-     point. Set `G` to the measured intensity at `Q_knee`. Enable
-     `link_B` (B will be computed from G, Rg, P; cannot be fitted). In
-     global fit, Rg is refined; G drives the fit at this stage.
-   - **No Guinier knee** (Level 1 is pure power-law, no structure above it):
-     Set `G = 0` and `Rg = 1e10`, both permanently fixed. Only P and B are
-     fitted.
+        **Required Reduction of Fitting Q Range** Set fitting Q range for the 
+        fits in sequence below to Q = (`q_min_guinier`, `background_q_min`). If 
+        the Q range is not reduced here, following fits **will fail**, this is 
+        not optional step.  
 
-   **Staged fit sequence:**
-   - Identified knee: `fix_all_except(["background", "P_1", "B_1"])` →
-     `run_fit` → verify. Then `fix_all_except(["background", "P_1", "B_1",
-     "Rg_1", "G_1"])` → `run_fit` → verify.
-   - Implied knee: `fix_all_except(["background", "P_1", "G_1"])` →
-     `run_fit` → verify. (Rg and B are fixed/linked; refined in global fit.)
-   - No knee: `fix_all_except(["background", "P_1", "B_1"])` → `run_fit` →
-     verify, then proceed directly to step 8.
-  
-  Show user the data with plot. 
+      **Staged fit sequence:**
+      - Identified knee: `fix_all_except(["background", "B_1"])` →
+        `run_fit` → verify.       
+        Then `fix_all_except(["background", "P_1", "B_1"])` → `run_fit` → verify. 
+        Then `fix_all_except(["background", "P_1", "B_1","Rg_1", "G_1"])` → `run_fit` → verify.
+      - Implied knee: `fix_all_except(["background", "G_1"])` → `run_fit` → verify. 
+        Then `fix_all_except(["background", "P_1", "G_1"])` →  `run_fit` → verify. 
+        (Rg and B are fixed/linked; refined in global fit.)
+      - No knee: `fix_all_except(["background", "P_1", "B_1"])` → `run_fit` →
+        verify, then proceed directly to step 8.
+      
+        Show user the data with plot. 
 
    **7.2 — Higher levels (Level 2, 3, …).**
 
    For each additional level N (2, 3, …) in order:
 
-   **Add new level** add additonal level into the model as higher level number.  
-   Do not add all at once, add one-by-one. 
+      **Add new level** add additonal level into the model as higher level number.  
+      Do not add all at once, add one-by-one. 
 
-   **Set power-law parameters:**
-   - Identify the power-law region between Level N's knee and Level N−1's
-     knee (or between the knee and minimum Q for the last level). Call
-     `fit_local_power_law(session_id, q_min_powerlaw, q_max_powerlaw)` to
-     estimate `P_N` and `B_N`. Apply these.
-   - If `P_N < P_(N-1)`, set `link_RGCO=True` for Level N−1 (the levels
-     may have hierarchical structure where an RgCO roll-off is needed).
-     This can be relaxed later if fitting shows it unnecessary.
+      **Set power-law parameters:**
+      - Identify the power-law region between Level N's knee and Level N−1's
+        knee (or between the knee and minimum Q for the last level). Call
+        `fit_local_power_law(session_id, q_min_powerlaw, q_max_powerlaw)` to
+        estimate `P_N` and `B_N`. Apply these.
+      - If `P_N < P_(N-1)`, set `link_RGCO=True` for Level N (the levels
+        may have hierarchical structure where an RgCO roll-off is needed).
+        This can be relaxed later if fitting shows it unnecessary.
 
-   **Set Guinier parameters — three cases (same as 7.1):**
-   - **Identified Guinier knee**: Call `fit_local_guinier` on the
-     minimum-width window. Apply returned `G_N` and `Rg_N`.
-   - **Implied Guinier knee**: Estimate Rg and G from the slope-change
-     point as in 7.1. Enable `link_B`. (Rg refined in global fit.)
-   - **No Guinier knee**: Set `G_N = 0` and `Rg_N = 1e10`, fixed.
+      **Set Guinier parameters — three cases (same as 7.1):**
+      - **Identified Guinier knee**: Call `fit_local_guinier` on the
+        minimum-width window. Apply returned `G_N` and `Rg_N`.
+      - **Implied Guinier knee**: Estimate Rg and G from the slope-change
+        point as in 7.1. Enable `link_B`. (Rg refined in global fit.)
+      - **No Guinier knee**: Set `G_N = 0` and `Rg_N = 1e10`, fixed.
 
-   **Staged fit sequence (same pattern as 7.1):**
-   - Identified: stage P+B first, then add Rg+G.
-   - Implied: stage P+G only.
-   - No knee: stage P+B.
+      **Required Reduction of Fitting Q Range** Set fitting Q range for the 
+        fits in sequence below to Q = (`q_min_guinier`, `background_q_min`). If 
+        the Q range is not set correctly here, following fits **will fail**, this is 
+        not optional step.  
 
-   After each level is initialized, call `get_fit_image` to monitor. If a
-   level's fit looks clearly wrong, adjust its starting values before
-   proceeding to the next level.
+      **Staged fit sequence:**
+      - Identified knee: `fix_all_except("B_N"])` →
+        `run_fit` → verify. 
+        Then `fix_all_except(["P_N", "B_N", "Rg_N", "G_N"])` 
+        → `run_fit` → verify.
+      - Implied knee: `fix_all_except(["background", "P_1", "G_1"])` →
+        `run_fit` → verify. (Rg and B are fixed/linked; refined in global fit.)
+      - No knee: `fix_all_except(["background", "P_1", "B_1"])` → `run_fit` →
+        verify, then proceed directly to step 8.
+      After each level is initialized, call `get_fit_image` to monitor. If a
+      level's fit looks clearly wrong, adjust its starting values before
+      proceeding to the next level.
 
-   **Repeat for all levels.** Once all are initialized, proceed to step 8. 
+      **Repeat for all levels.** Once all are initialized, proceed to step 8. 
 
 8. **Quality checks and correlation detection — mandatory before global fit.**
 
@@ -248,13 +272,11 @@ levels — remove one.
    Call `get_residuals(session_id)` and inspect the 5–10 lowest-Q points.
 
    **Check 1 — Geometric (primary, conclusive):** Compute
-   `decades_below = log10((1/Rg_1) / Q_min)` where Rg_1 is the smallest
+   `decades_below = log10((1/Rg_N) / Q_min)` where Rg_N is the highest
    Guinier level's Rg, and Q_min is the lowest measured Q. If
-   `decades_below > 0.5` **AND** any normalised residual in that Q region
+   `decades_below > 0.5` **AND** normalised residual in that Q region
    is positive (model underestimates), a large-scale (low-Q) power-law
-   level is required. **This conclusion is not overridable by visual
-   inspection.** Example: Rg_1 = 71 Å → Q_knee ≈ 0.014 Å⁻¹; Q_min =
-   1.4×10⁻⁴ Å⁻¹: `decades_below = log10(0.014/0.00014) ≈ 2.0 >> 0.5`.
+   level is required.
 
    **Check 2 — Residuals (confirmatory):** Lowest-Q residuals are all positive
    AND exceed +5, or `get_fit_quality`'s `max_abs_frac_misfit` > 0.3 near Q_min
@@ -303,6 +325,14 @@ levels — remove one.
 - **No `free_all` tool exists.** Use `fix_all_except(session_id,
   free_list)` with an explicit list. Call `get_model_parameters` if
   you're unsure of the exact parameter names.
+- **Slope vs P sign convention:** `detect_features` segments report
+  `slope` in the log-log sense (negative; e.g., Porod = −4.0).
+  `fit_local_power_law` returns `P` (positive; e.g., Porod = 4.0).
+  Never assign a `detect_features` slope value directly to model
+  parameter P — it has the wrong sign. Use segment `slope` only for
+  the background and implied-knee checks (where the negative sign is
+  expected); call `fit_local_power_law` on the segment Q range to get
+  the P starting value.
 - **Always think in log Q.** A range that looks small on a linear axis
   can span half the data in log space. Compute decades
   (`log10(Q_high / Q_low)`) before dismissing any sub-range.

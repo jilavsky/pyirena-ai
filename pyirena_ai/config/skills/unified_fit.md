@@ -22,6 +22,14 @@ smallest Rg). Each level contributes a Guinier term (G, Rg) and a
 power-law term (B, P), plus an optional high-Q roll-off (RgCO) and an
 optional correlation correction (ETA, PACK).
 
+Each Unified Fit level may have three distict observable features:
+- `Guinier plateau` is typically flat or close to flat (P < 1) area from minimum 
+   Q measured to Guinier knee. Often obstructed by scattering from larger features. Does 
+   not require additional model, Guinier formula implies this.  
+- `Guinier knee`is where intensity smoothly transitions from flat (Guinier plateau) to
+   power law slope.   
+- `Power law slope` is high power law drop in intensity above the Guinier knee. 
+
 The highest-numbered level often represents structures too large for their
 Guinier region to fall within the measured Q range — by convention this
 level has G = 0 and a very large fixed Rg, leaving only the power-law
@@ -46,19 +54,25 @@ knee is the HIGH-Q boundary of that plateau — where the curve transitions
 into steeper power-law decay. `Rg ≈ 1/Q_knee` is a rough estimate for
 choosing a fitting window. **A slope change from steep to less steep is
 not a knee** — it is a larger structure's power-law blending into the
-next level; the genuine plateau (slope ≈ 0) lies at higher Q. Use
-`fit_local_guinier(session_id, q_min, q_max)` on a window bracketing
+next level; the genuine plateau (slope ≈ 0) lies at lower Q and is obstructed. 
+Use `fit_local_guinier(session_id, q_min, q_max)` on a window bracketing
 the flat region to obtain a reliable Rg.
 
 **G** — Guinier prefactor (cm⁻¹). Sets the level's intensity at Q → 0.
 Obtain from `fit_local_guinier` together with Rg — do not read off the
 plot. By convention the large-scale power-law level has G = 0.
 
-**P** — power-law exponent (log-log slope). Physical interpretation:
+**P** — power-law exponent. Always positive (1–4 range). The intensity
+drops as I ∝ Q^(−P), so the log-log slope equals −P. Physical
+interpretation:
 - P = 4: smooth surface (Porod)
 - 3 < P < 4: rough surface or broad size distribution
 - P = 3: mass fractal surface or collapsed polymer
 - P < 3: mass fractal interior, polymer chains, or size distribution
+
+`fit_local_power_law` returns P directly (positive). `detect_features`
+segment `slope` fields are negative (slope = −P) — do not assign them
+to model parameter P without negating.
 
 Obtain a starting value from `fit_local_power_law` on the linear
 power-law region of the log-log plot (between knees, or above the
