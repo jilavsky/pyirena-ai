@@ -21,6 +21,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fitted HDF5 file.
 - CLI entry point `pyirena-ai` with `fit`, `providers`, and `set-key`
   subcommands.
+- Fit model registry (`pyirena_ai.core.models`) for multi-model support:
+  unified-fit and size-distribution with separate strategy/skill configs.
+- GUI chat interface with persistent session state, formatting controls
+  (markdown/plain-text), and model selection dropdown.
+- Size Distribution skill and strategy files with parameter reference guide
+  and inversion interpretation.
+- Enhanced CLI and agent with improved CLI argument parsing and agent-level
+  strategy/skill loading.
 
 ## [0.0.1] — unreleased
 First scaffolding release; not yet on PyPI.

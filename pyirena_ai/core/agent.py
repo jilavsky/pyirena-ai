@@ -145,11 +145,20 @@ class Agent:
             self.session.pyirena_session_id = result["session_id"]
         if tc.name == "save_fit" and isinstance(result, dict) and "saved_to" in result:
             self.session.saved_to = result["saved_to"]
+        if tc.name == "save_sizes_fit" and isinstance(result, dict) and "file_path" in result:
+            self.session.saved_to = result["file_path"]
         if tc.name in ("run_fit", "get_chi_squared") and isinstance(result, dict):
             rcs = result.get("reduced_chi_squared")
             if isinstance(rcs, (int, float)):
                 self.session.final_chi_squared = float(rcs)
         if tc.name == "run_fit" and isinstance(result, dict):
+            seed = result.get("random_seed")
+            if seed is not None:
+                self.session.last_random_seed = int(seed)
+        if tc.name == "run_sizes_fit" and isinstance(result, dict):
+            chi = result.get("chi_squared")
+            if isinstance(chi, (int, float)):
+                self.session.final_chi_squared = float(chi)
             seed = result.get("random_seed")
             if seed is not None:
                 self.session.last_random_seed = int(seed)

@@ -41,6 +41,7 @@ or:
 from __future__ import annotations
 
 from pyirena_ai.config.settings import load_settings
+from pyirena_ai.core.models import FIT_MODELS, model_choices
 from pyirena_ai.core.strategy import list_strategies
 from pyirena_ai.llm.registry import known_providers
 
@@ -62,9 +63,9 @@ def build_app():
     # -----------------------------------------------------------------------
     # Layout
     # -----------------------------------------------------------------------
-    with gr.Blocks(title="pyirena-ai · Unified Fit Agent") as demo:
+    with gr.Blocks(title="pyirena-ai · SAXS Fitting Agent") as demo:
         gr.Markdown(
-            "# pyirena-ai · Unified Fit Agent\n"
+            "# pyirena-ai · SAXS Fitting Agent\n"
             "Paste the path to a NXcanSAS HDF5 file. "
             "The fitted result is saved back to the same file; "
             "the audit log goes to `<data_folder>/pyirena-ai/`."
@@ -96,6 +97,13 @@ def build_app():
                                 "The fit is saved back to this file in-place."
                             ),
                             lines=2,
+                        )
+
+                        fit_model_kind = gr.Dropdown(
+                            label="Fit model",
+                            choices=model_choices(),
+                            value="unified_fit",
+                            info="Select the pyirena fitting model.",
                         )
 
                         fit_provider = gr.Dropdown(
@@ -193,6 +201,14 @@ def build_app():
                             placeholder="/path/to/your/scan.h5",
                             lines=2,
                         )
+
+                        chat_model_kind = gr.Dropdown(
+                            label="Fit model",
+                            choices=model_choices(),
+                            value="unified_fit",
+                            info="Select the pyirena fitting model.",
+                        )
+
                         chat_provider = gr.Dropdown(
                             label="LLM provider",
                             choices=known_providers(),
@@ -354,11 +370,31 @@ def build_app():
         )
 
         # -----------------------------------------------------------------------
+        # Events — fit model kind dropdowns (set default strategy on change)
+        # -----------------------------------------------------------------------
+
+        def on_fit_model_kind_change(model_key: str):
+            default_strat = FIT_MODELS.get(model_key, FIT_MODELS["unified_fit"]).default_strategy
+            return gr.update(value=default_strat)
+
+        fit_model_kind.change(
+            on_fit_model_kind_change,
+            inputs=[fit_model_kind],
+            outputs=[fit_strategy],
+        )
+
+        chat_model_kind.change(
+            on_fit_model_kind_change,
+            inputs=[chat_model_kind],
+            outputs=[chat_strategy],
+        )
+
+        # -----------------------------------------------------------------------
         # Events — Fit tab
         # -----------------------------------------------------------------------
 
         def on_fit(file_path, provider, model_id, base_url, strategy,
-                   user_context, inc_strategy, inc_skills, show_thinking):
+                   user_context, inc_strategy, inc_skills, show_thinking, model_key):
             file_path = (file_path or "").strip()
             if not file_path:
                 yield None, "_No file path entered._", [], "", "error: no file"
@@ -369,6 +405,7 @@ def build_app():
                 include_strategy=inc_strategy,
                 include_skills=inc_skills,
                 show_thinking=show_thinking,
+                model_key=model_key or "unified_fit",
             ):
                 yield state_tuple
 
@@ -376,7 +413,7 @@ def build_app():
             fn=on_fit,
             inputs=[fit_file_path, fit_provider, fit_model, fit_base_url,
                     fit_strategy, fit_context, fit_inc_strategy, fit_inc_skills,
-                    fit_show_thinking],
+                    fit_show_thinking, fit_model_kind],
             outputs=[fit_image, fit_params, fit_log, fit_token, fit_status],
         )
         fit_stop_btn.click(fn=fit_runner.request_stop, inputs=[], outputs=[])
@@ -387,7 +424,7 @@ def build_app():
 
         def on_chat_start(
             runner, file_path, provider, model_id, base_url, strategy,
-            user_context, inc_strategy, inc_skills, show_thinking,
+            user_context, inc_strategy, inc_skills, show_thinking, model_key,
         ):
             # Always create a fresh ChatRunner per Start click — that way
             # repeated Start clicks don't reuse a stale session.
@@ -396,6 +433,7 @@ def build_app():
                 file_path, provider, model_id or "", base_url or "",
                 strategy, user_context or "",
                 inc_strategy, inc_skills, show_thinking,
+                model_key=model_key or "unified_fit",
             ):
                 image, params, log, token, status, chat = tup
                 yield image, params, log, token, status, chat, new_runner
@@ -404,7 +442,8 @@ def build_app():
             fn=on_chat_start,
             inputs=[chat_runner_state, chat_file_path, chat_provider,
                     chat_model, chat_base_url, chat_strategy, chat_context,
-                    chat_inc_strategy, chat_inc_skills, chat_show_thinking],
+                    chat_inc_strategy, chat_inc_skills, chat_show_thinking,
+                    chat_model_kind],
             outputs=[chat_image, chat_params, chat_log, chat_token,
                      chat_status, chat_dialogue, chat_runner_state],
         )

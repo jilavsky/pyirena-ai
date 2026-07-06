@@ -30,6 +30,7 @@ from pyirena_ai.config.keyring_io import get_api_key
 from pyirena_ai.config.settings import load_settings
 from pyirena_ai.core.agent import Agent
 from pyirena_ai.core.audit import default_audit_path, write_audit_json
+from pyirena_ai.core.models import FitModel, get_model
 from pyirena_ai.core.session import RunSession
 from pyirena_ai.core.skills import build_system_prompt
 from pyirena_ai.core.strategy import load_strategy
@@ -37,6 +38,7 @@ from pyirena_ai.core.tools import dispatch, is_image_result
 from pyirena_ai.gui.formatting import (
     clean_llm_text,
     params_to_markdown,
+    sizes_config_to_markdown,
     thinking_block,
     token_line,
     tool_event_line,
@@ -50,11 +52,18 @@ class StopFitError(Exception):
 
 
 # Tools that mutate model state — we re-read and re-render params after these.
+# Unified Fit tools refresh via get_model_parameters; Size Distribution tools
+# refresh via get_sizes_config (see build_streaming_agent / FitModel.state_tool).
 _PARAM_CHANGING_TOOLS = {
+    # Unified Fit
     "select_model", "set_parameter_value", "set_parameter_bounds",
     "fix_parameter", "free_parameter", "fix_all_except",
     "reset_parameters_to_defaults", "add_unified_level", "remove_unified_level",
     "run_fit",
+    # Size Distribution
+    "select_sizes_model", "set_size_grid", "set_shape", "set_method",
+    "set_error_handling", "set_background", "fit_power_law_background",
+    "fit_flat_background", "run_sizes_fit",
 }
 
 
@@ -114,6 +123,7 @@ class GradioRunner:
         include_skills: bool,
         show_thinking: bool,
         state: UIState,
+        model_key: str = "unified_fit",
     ) -> None:
         """Runs in a background thread. Mutates `state` and puts copies on the queue."""
 
@@ -152,9 +162,11 @@ class GradioRunner:
                 push("error: strategy not found")
                 return
 
+            fit_model = get_model(model_key)
+
             system_prompt = build_system_prompt(
                 strategy_text,
-                tool_name="unified_fit",
+                tool_name=fit_model.skill,
                 extra_context=user_context,
                 include_strategy=include_strategy,
                 include_skills=include_skills,
@@ -180,11 +192,13 @@ class GradioRunner:
                 show_thinking=show_thinking,
                 max_iterations=prov_defaults["max_iterations"],
                 max_input_tokens=prov_defaults["max_input_tokens"],
+                fit_model=fit_model,
             )
 
             user_prompt = (
                 f"Fit the dataset at:\n  {file_path}\n\n"
-                f"When done, save the result with save_fit(session_id, output_path=None) "
+                f"When done, save the result with "
+                f"{fit_model.save_tool}(session_id, output_path=None) "
                 f"to overwrite the source file.\n\n"
                 "Follow the staged fitting workflow from your system prompt. "
                 "Return a plain-English summary as your final message."
@@ -253,6 +267,7 @@ class GradioRunner:
         include_strategy: bool = True,
         include_skills: bool = True,
         show_thinking: bool = False,
+        model_key: str = "unified_fit",
     ) -> Generator[tuple, None, None]:
         """Start the background thread and yield UIState tuples until done."""
         self._stop.clear()
@@ -262,7 +277,7 @@ class GradioRunner:
             target=self._run,
             args=(file_path, provider_name, model_id, base_url, strategy,
                   user_context, include_strategy, include_skills, show_thinking,
-                  state),
+                  state, model_key),
             daemon=True,
         )
         t.start()
@@ -292,6 +307,7 @@ def build_streaming_agent(
     show_thinking: bool,
     max_iterations: int,
     max_input_tokens: int,
+    fit_model: "FitModel | None" = None,
 ) -> Agent:
     """Construct an Agent that streams UIState updates as it runs.
 
@@ -362,8 +378,12 @@ def build_streaming_agent(
 
         sid = session.pyirena_session_id
         if tc.name in _PARAM_CHANGING_TOOLS and sid:
-            pr = dispatch("get_model_parameters", {"session_id": sid})
-            state.params_md = params_to_markdown(pr)
+            _state_tool = (fit_model.state_tool if fit_model else "get_model_parameters")
+            pr = dispatch(_state_tool, {"session_id": sid})
+            if _state_tool == "get_sizes_config":
+                state.params_md = sizes_config_to_markdown(pr)
+            else:
+                state.params_md = params_to_markdown(pr)
 
         cost = estimate_cost_usd(
             session.model,

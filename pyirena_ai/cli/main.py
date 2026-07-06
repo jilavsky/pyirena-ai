@@ -30,6 +30,7 @@ from pyirena_ai.config.settings import (
 )
 from pyirena_ai.core.agent import Agent
 from pyirena_ai.core.audit import default_audit_path, write_audit_json
+from pyirena_ai.core.models import get_model
 from pyirena_ai.core.session import RunSession
 from pyirena_ai.core.skills import build_system_prompt
 from pyirena_ai.gui.formatting import clean_llm_text
@@ -52,10 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_fit = sub.add_parser("fit", help="Run the agent on one NXcanSAS file.")
     p_fit.add_argument("input", help="Path to a NXcanSAS HDF5 file.")
     p_fit.add_argument("--model", default="unified",
-                       choices=["unified"],
-                       help="pyirena model to fit (Phase 1: unified only).")
-    p_fit.add_argument("--strategy", default="unified_fit_default",
-                       help="Name of a bundled or user strategy (or .md path).")
+                       choices=["unified", "sizes"],
+                       help="pyirena model to fit: 'unified' (Unified Fit) or "
+                            "'sizes' (Size Distribution).")
+    p_fit.add_argument("--strategy", default="",
+                       help="Name of a bundled or user strategy (or .md path). "
+                            "Defaults to the selected model's default strategy.")
     p_fit.add_argument("--provider", default="anthropic",
                        choices=known_providers(),
                        help="LLM provider.")
@@ -206,15 +209,18 @@ def cmd_fit(args: argparse.Namespace) -> int:
         )
         return 2
 
+    fit_model = get_model(args.model)
+    strategy_name = args.strategy or fit_model.default_strategy
+
     try:
-        strategy_text = load_strategy(args.strategy)
+        strategy_text = load_strategy(strategy_name)
     except KeyError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
     system_prompt = build_system_prompt(
         strategy_text,
-        tool_name="unified_fit",
+        tool_name=fit_model.skill,
         extra_context=args.context,
         include_strategy=not args.no_strategy,
         include_skills=not args.no_skills,
@@ -231,14 +237,14 @@ def cmd_fit(args: argparse.Namespace) -> int:
     )
 
     save_out = args.save_out or str(input_path)
-    user_prompt = _build_user_prompt(input_path, save_out)
+    user_prompt = _build_user_prompt(input_path, save_out, fit_model.save_tool)
 
     session = RunSession(
         input_file=str(input_path),
         provider=args.provider,
         model=model_id,
         base_url=base_url,
-        strategy=args.strategy,
+        strategy=strategy_name,
         system_prompt=system_prompt,
     )
 
@@ -306,11 +312,11 @@ def cmd_fit(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_user_prompt(input_path: Path, save_out: str) -> str:
+def _build_user_prompt(input_path: Path, save_out: str, save_tool: str) -> str:
     return (
         f"Fit the dataset at:\n  {input_path}\n\n"
         f"When done, save the result with:\n"
-        f"  save_fit(session_id, output_path={save_out!r})\n\n"
+        f"  {save_tool}(session_id, output_path={save_out!r})\n\n"
         "Follow the staged fitting workflow from your system prompt. "
         "When you finish, return a short plain-English summary as your "
         "final message — do not call any more tools after that."

@@ -45,6 +45,37 @@ def params_to_markdown(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def sizes_config_to_markdown(result: dict) -> str:
+    """Render a `get_sizes_config` result dict as a compact Markdown table.
+
+    Returns a placeholder string if the result contains an error or no config.
+    """
+    if "error" in result:
+        return f"**Error reading sizes config:** {result['error']}"
+    cfg = result.get("config") or {}
+    if not cfg:
+        return "_No sizes model configured yet_"
+
+    rows = [
+        ("Method", cfg.get("method", "—")),
+        ("Shape", cfg.get("shape", "—")),
+        ("Contrast", _fmt(cfg.get("contrast"))),
+        ("r_min (Å)", _fmt(cfg.get("r_min"))),
+        ("r_max (Å)", _fmt(cfg.get("r_max"))),
+        ("n_bins", str(cfg.get("n_bins", "—"))),
+        ("Log spacing", "yes" if cfg.get("log_spacing") else "no"),
+        ("error_scale", _fmt(cfg.get("error_scale"))),
+        ("Frac. error", "yes" if cfg.get("fractional_error") else "no"),
+        ("BG flat", _fmt(cfg.get("background"))),
+        ("BG power-law B", _fmt(cfg.get("power_law_B"))),
+        ("BG power-law P", _fmt(cfg.get("power_law_P"))),
+    ]
+    lines = ["| Setting | Value |", "|---------|------:|"]
+    for label, val in rows:
+        lines.append(f"| {label} | {val} |")
+    return "\n".join(lines)
+
+
 def tool_event_line(name: str, args: dict, result: dict, elapsed_s: float) -> str:
     """One-line summary of a tool dispatch for the agent log chatbot."""
     if "error" in result:
@@ -58,7 +89,20 @@ def tool_event_line(name: str, args: dict, result: dict, elapsed_s: float) -> st
         chi_str = f"χ²ᵣ={_fmt(rchi)}" if rchi is not None else ""
         return f"🔧 **run_fit** → {ok} {chi_str}{seed_str}  ({elapsed_s:.1f}s)"
 
-    if name in ("get_fit_image", "get_residuals_image"):
+    if name == "run_sizes_fit":
+        chi = result.get("chi_squared")
+        ok  = "✓" if result.get("success") else "✗"
+        vf  = result.get("volume_fraction")
+        pr  = result.get("peak_r")
+        parts = [f"χ²={_fmt(chi)}" if chi is not None else ""]
+        if vf is not None:
+            parts.append(f"Vf={_fmt(vf)}")
+        if pr is not None:
+            parts.append(f"peak_r={_fmt(pr)} Å")
+        return f"🔧 **run_sizes_fit** → {ok} {' '.join(p for p in parts if p)}  ({elapsed_s:.1f}s)"
+
+    if name in ("get_fit_image", "get_residuals_image", "get_sizes_fit_image",
+                "get_background_preview_image"):
         return f"🖼 **{name}**  ({elapsed_s:.1f}s)"
 
     if name == "open_dataset":
@@ -69,6 +113,10 @@ def tool_event_line(name: str, args: dict, result: dict, elapsed_s: float) -> st
     if name == "save_fit":
         saved = result.get("saved_to", "?")
         return f"💾 **save_fit** → `{saved}`  ({elapsed_s:.2f}s)"
+
+    if name == "save_sizes_fit":
+        saved = result.get("file_path", "?")
+        return f"💾 **save_sizes_fit** → `{saved}`  ({elapsed_s:.2f}s)"
 
     short = _short_args(args, max_chars=60)
     return f"🔧 **{name}**({short})  ({elapsed_s:.2f}s)"

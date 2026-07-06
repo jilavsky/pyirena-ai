@@ -31,11 +31,17 @@ from pyirena_ai.config.keyring_io import get_api_key
 from pyirena_ai.config.settings import load_settings
 from pyirena_ai.core.agent import Agent
 from pyirena_ai.core.audit import write_audit_json
+from pyirena_ai.core.models import get_model
 from pyirena_ai.core.session import RunSession
 from pyirena_ai.core.skills import build_system_prompt
 from pyirena_ai.core.strategy import load_strategy
 from pyirena_ai.core.tools import dispatch
-from pyirena_ai.gui.formatting import clean_llm_text, params_to_markdown, token_line
+from pyirena_ai.gui.formatting import (
+    clean_llm_text,
+    params_to_markdown,
+    sizes_config_to_markdown,
+    token_line,
+)
 from pyirena_ai.gui.runner import (
     StopFitError,
     UIState,
@@ -79,6 +85,7 @@ class ChatRunner:
         include_strategy: bool,
         include_skills: bool,
         show_thinking: bool,
+        model_key: str = "unified_fit",
     ) -> Generator[tuple, None, None]:
         """Open the dataset, build the agent, seed the conversation."""
         self._stop.clear()
@@ -93,7 +100,7 @@ class ChatRunner:
             target=self._do_start,
             args=(file_path, provider_name, model_id, base_url, strategy,
                   user_context, include_strategy, include_skills, show_thinking,
-                  push),
+                  push, model_key),
             daemon=True,
         )
         t.start()
@@ -112,6 +119,7 @@ class ChatRunner:
         include_skills: bool,
         show_thinking: bool,
         push,
+        model_key: str = "unified_fit",
     ) -> None:
         try:
             file_path = file_path.strip().strip("'\"")
@@ -141,9 +149,11 @@ class ChatRunner:
                 push("error: strategy not found")
                 return
 
+            fit_model = get_model(model_key)
+
             system_prompt = build_system_prompt(
                 strategy_text,
-                tool_name="unified_fit",
+                tool_name=fit_model.skill,
                 extra_context=user_context,
                 include_strategy=include_strategy,
                 include_skills=include_skills,
@@ -163,6 +173,7 @@ class ChatRunner:
                 "user_context": user_context,
                 "include_strategy": include_strategy,
                 "include_skills": include_skills,
+                "model_key": model_key,
             }
 
             # Open the dataset directly (no LLM round-trip — we know the path).
@@ -197,6 +208,7 @@ class ChatRunner:
                 show_thinking=show_thinking,
                 max_iterations=prov_defaults["max_iterations"],
                 max_input_tokens=prov_defaults["max_input_tokens"],
+                fit_model=fit_model,
             )
 
             # Seed the conversation: tell the agent which dataset is open,
@@ -315,9 +327,14 @@ class ChatRunner:
             # parameter mutations the agent did this turn.
             sid = self._session.pyirena_session_id
             if sid:
-                pr = dispatch("get_model_parameters", {"session_id": sid})
+                _model_key = self._session_params.get("model_key", "unified_fit")
+                _fit_model = get_model(_model_key)
+                pr = dispatch(_fit_model.state_tool, {"session_id": sid})
                 if "error" not in pr:
-                    self._state.params_md = params_to_markdown(pr)
+                    if _fit_model.state_tool == "get_sizes_config":
+                        self._state.params_md = sizes_config_to_markdown(pr)
+                    else:
+                        self._state.params_md = params_to_markdown(pr)
 
             push("ready")
         except StopFitError:
@@ -350,11 +367,13 @@ class ChatRunner:
             user_context = params.get("user_context", "")
             include_strategy = params.get("include_strategy", True)
             include_skills = params.get("include_skills", True)
+            model_key = params.get("model_key", "unified_fit")
 
+            fit_model = get_model(model_key)
             strategy_text = load_strategy(strategy) if include_strategy else ""
             system_prompt = build_system_prompt(
                 strategy_text,
-                tool_name="unified_fit",
+                tool_name=fit_model.skill,
                 extra_context=user_context,
                 include_strategy=include_strategy,
                 include_skills=include_skills,
