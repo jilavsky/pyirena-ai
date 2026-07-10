@@ -7,8 +7,6 @@ if no NXcanSAS file is reachable.
 
 from __future__ import annotations
 
-import pytest
-
 from pyirena_ai.core.tools import (
     PYIRENA_VERSION,
     TOOL_FUNCS,

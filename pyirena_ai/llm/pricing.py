@@ -7,8 +7,6 @@ Update as providers re-price.
 
 from __future__ import annotations
 
-from typing import Optional
-
 # (input $/M tokens, output $/M tokens). Lookup is by case-insensitive
 # substring match on the model identifier, so e.g. "claude-opus-4-7-1m"
 # still matches "claude-opus-4-7".
@@ -30,7 +28,7 @@ _COST_PER_1M: dict[str, tuple[float, float]] = {
 }
 
 
-def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> Optional[float]:
+def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float | None:
     """Return estimated cost in USD, or None if the model isn't in the table."""
     key = model.lower()
     for needle, (ci, co) in _COST_PER_1M.items():

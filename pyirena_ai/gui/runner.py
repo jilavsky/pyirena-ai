@@ -8,12 +8,16 @@ requires a Python generator. The bridge:
      onto a `queue.Queue`.
   3. The Gradio generator method (`stream`) polls the queue and yields
      the current `UIState` to Gradio after each update.
-  4. Pressing **Stop** sets a `threading.Event`; the agent checks it before
-     each `send_with_tools` call and raises `StopFitError`.
+  4. Pressing **Stop** sets a `threading.Event`; the agent's
+     `hooks.should_stop` sees it before each LLM call and raises
+     `AgentStopped` (aliased here as `StopFitError`).
 
 `UIState` carries exactly the values Gradio needs to update the five output
 components: image, parameter-table markdown, chatbot messages, token line,
 status text.
+
+All observation of the agent goes through `AgentHooks` (see
+`core/agent.py`) — no methods are monkey-patched.
 """
 
 from __future__ import annotations
@@ -22,19 +26,16 @@ import base64
 import queue
 import threading
 import traceback
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from io import BytesIO
-from typing import Any, Generator, Optional
+from typing import Any
 
-from pyirena_ai.config.keyring_io import get_api_key
-from pyirena_ai.config.settings import load_settings
-from pyirena_ai.core.agent import Agent
-from pyirena_ai.core.audit import default_audit_path, write_audit_json
-from pyirena_ai.core.models import FitModel, get_model
+from pyirena_ai.core.agent import Agent, AgentHooks, AgentStopped
+from pyirena_ai.core.models import FitModel
+from pyirena_ai.core.run_setup import RunConfig, build_run, finish_run
 from pyirena_ai.core.session import RunSession
-from pyirena_ai.core.skills import build_system_prompt
-from pyirena_ai.core.strategy import load_strategy
-from pyirena_ai.core.tools import dispatch, is_image_result
+from pyirena_ai.core.tools import MUTATING_TOOLS, dispatch, is_image_result
 from pyirena_ai.gui.formatting import (
     clean_llm_text,
     params_to_markdown,
@@ -44,27 +45,9 @@ from pyirena_ai.gui.formatting import (
     tool_event_line,
 )
 from pyirena_ai.llm.pricing import estimate_cost_usd
-from pyirena_ai.llm.registry import agent_defaults, build_provider
 
-
-class StopFitError(Exception):
-    pass
-
-
-# Tools that mutate model state — we re-read and re-render params after these.
-# Unified Fit tools refresh via get_model_parameters; Size Distribution tools
-# refresh via get_sizes_config (see build_streaming_agent / FitModel.state_tool).
-_PARAM_CHANGING_TOOLS = {
-    # Unified Fit
-    "select_model", "set_parameter_value", "set_parameter_bounds",
-    "fix_parameter", "free_parameter", "fix_all_except",
-    "reset_parameters_to_defaults", "add_unified_level", "remove_unified_level",
-    "run_fit",
-    # Size Distribution
-    "select_sizes_model", "set_size_grid", "set_shape", "set_method",
-    "set_error_handling", "set_background", "fit_power_law_background",
-    "fit_flat_background", "run_sizes_fit",
-}
+# Backwards-compatible alias — the loop now raises core.agent.AgentStopped.
+StopFitError = AgentStopped
 
 
 @dataclass
@@ -78,7 +61,10 @@ class UIState:
     """Chat-mode only: the user↔assistant dialogue (separate from `log`,
     which holds tool-call events). Empty in Fit mode."""
 
-    def clone(self) -> "UIState":
+    # NOTE (thread-safety): `clone()` copies the lists but shares the dict
+    # entries inside them. This is safe only because entries are append-only
+    # and never mutated after being added — keep it that way.
+    def clone(self) -> UIState:
         return UIState(
             image=self.image,
             params_md=self.params_md,
@@ -102,7 +88,7 @@ class GradioRunner:
     def __init__(self) -> None:
         self._stop = threading.Event()
         self._q: queue.Queue[UIState] = queue.Queue()
-        self._session: Optional[RunSession] = None
+        self._session: RunSession | None = None
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -133,72 +119,37 @@ class GradioRunner:
             self._q.put(state.clone())
 
         try:
-            # Normalize path: strip whitespace and surrounding quotes (users
-            # often paste shell paths like '/my data/file.h5' with quotes).
-            file_path = file_path.strip().strip("'\"")
-
-            # ---- build provider -------------------------------------------
-            settings = load_settings()
-            prov_cfg = settings.get(provider_name)
-            model_id  = model_id  or prov_cfg.model
-            base_url  = base_url  or prov_cfg.base_url
-            api_key   = get_api_key(provider_name)
-
-            timeout = 600.0 if provider_name in {"lmstudio", "ollama"} else 120.0
-            provider = build_provider(
-                provider_name,
-                api_key=api_key,
-                model=model_id,
-                base_url=base_url,
-                timeout=timeout,
-                enable_thinking=show_thinking,
-            )
-
-            # ---- load strategy + skills + user instructions ---------------
-            try:
-                strategy_text = load_strategy(strategy) if include_strategy else ""
-            except KeyError as e:
-                state.log.append({"role": "assistant", "content": f"⚠ {e}"})
-                push("error: strategy not found")
-                return
-
-            fit_model = get_model(model_key)
-
-            system_prompt = build_system_prompt(
-                strategy_text,
-                tool_name=fit_model.skill,
-                extra_context=user_context,
-                include_strategy=include_strategy,
-                include_skills=include_skills,
-            )
-
-            self._session = RunSession(
-                input_file=file_path,
-                provider=provider_name,
-                model=model_id,
+            config = RunConfig(
+                file_path=file_path,
+                provider_name=provider_name,
+                model_id=model_id,
                 base_url=base_url,
                 strategy=strategy,
-                system_prompt=system_prompt,
-            )
-
-            prov_defaults = agent_defaults(provider_name)
-            agent = build_streaming_agent(
-                provider=provider,
-                system_prompt=system_prompt,
-                session=self._session,
-                state=state,
-                push=push,
-                stop_event=self._stop,
+                model_key=model_key,
+                user_context=user_context,
+                include_strategy=include_strategy,
+                include_skills=include_skills,
                 show_thinking=show_thinking,
-                max_iterations=prov_defaults["max_iterations"],
-                max_input_tokens=prov_defaults["max_input_tokens"],
-                fit_model=fit_model,
             )
+            try:
+                bundle = build_streaming_run(
+                    config,
+                    state=state,
+                    push=push,
+                    stop_event=self._stop,
+                    show_thinking=show_thinking,
+                )
+            except KeyError as e:
+                state.log.append({"role": "assistant", "content": f"⚠ {e}"})
+                push("error: bad configuration")
+                return
+
+            self._session = bundle.session
 
             user_prompt = (
-                f"Fit the dataset at:\n  {file_path}\n\n"
+                f"Fit the dataset at:\n  {bundle.session.input_file}\n\n"
                 f"When done, save the result with "
-                f"{fit_model.save_tool}(session_id, output_path=None) "
+                f"{bundle.fit_model.save_tool}(session_id, output_path=None) "
                 f"to overwrite the source file.\n\n"
                 "Follow the staged fitting workflow from your system prompt. "
                 "Return a plain-English summary as your final message."
@@ -207,14 +158,15 @@ class GradioRunner:
             state.log.append({
                 "role": "user",
                 "content": (
-                    f"🚀 Starting fit — provider: **{provider_name}** · "
-                    f"model: **{model_id}** · "
-                    f"max iterations: **{prov_defaults['max_iterations']}** · "
-                    f"input token cap: **{prov_defaults['max_input_tokens']:,}**"
+                    f"🚀 Starting fit — provider: **{bundle.provider_name}** · "
+                    f"model: **{bundle.model_id}** · "
+                    f"tools exposed: **{len(bundle.tool_schemas)}** · "
+                    f"max iterations: **{bundle.max_iterations}** · "
+                    f"input token cap: **{bundle.max_input_tokens:,}**"
                 ),
             })
             push("running")
-            final = agent.run(user_prompt)
+            final = bundle.agent.run(user_prompt)
 
             if final.text:
                 state.log.append({"role": "assistant", "content": clean_llm_text(final.text)})
@@ -227,25 +179,14 @@ class GradioRunner:
             state.log.append({"role": "assistant", "content": f"❌ Error:\n```\n{tb}\n```"})
             push("error")
         finally:
-            # Always write audit trail
+            # Always write audit trail + release the pyirena session.
             if self._session:
                 try:
-                    cost = estimate_cost_usd(
-                        self._session.model,
-                        self._session.input_tokens,
-                        self._session.output_tokens,
-                    )
-                    self._session.cost_usd_estimate = cost
-                    audit_path = default_audit_path(file_path)
-                    write_audit_json(self._session, audit_path)
+                    audit_path = finish_run(self._session)
                     state.log.append({
                         "role": "assistant",
                         "content": f"📄 Audit trail: `{audit_path}`",
                     })
-                    # Release pyirena session
-                    sid = self._session.pyirena_session_id
-                    if sid:
-                        dispatch("close_session", {"session_id": sid})
                 except Exception:
                     pass
             if state.status == "running":
@@ -296,76 +237,37 @@ def _b64_to_pil(b64: str) -> Any:
     return Image.open(BytesIO(data))
 
 
-def build_streaming_agent(
+def make_streaming_hooks(
     *,
-    provider,
-    system_prompt: str,
     session: RunSession,
     state: UIState,
     push,                                      # callable: push(status=None) → None
     stop_event: threading.Event,
     show_thinking: bool,
-    max_iterations: int,
-    max_input_tokens: int,
-    fit_model: "FitModel | None" = None,
-) -> Agent:
-    """Construct an Agent that streams UIState updates as it runs.
+    fit_model: FitModel | None = None,
+) -> AgentHooks:
+    """AgentHooks that stream UIState updates as the agent runs.
 
-    Behavior added on top of the base Agent:
-      * Stop button: each call to provider.send_with_tools first checks
-        `stop_event` and raises `StopFitError` if set.
-      * Thinking display: when `show_thinking` is True, any `thinking_text`
-        on the response is appended to `state.log` as a collapsible block
-        before the tool dispatches that follow.
-      * Tool instrumentation: after each tool call, append a one-line event
-        to `state.log`, refresh the parameter table on state-changing tools,
-        capture fit images, and update the token counter.
+    * Stop button: `should_stop` reflects `stop_event`; the loop raises
+      `AgentStopped` (`StopFitError`) which the runner catches.
+    * Thinking display: when `show_thinking` is True, `thinking_text` is
+      appended to `state.log` as a collapsible block.
+    * Tool instrumentation: after each tool call, append a one-line event
+      to `state.log`, refresh the parameter table on state-changing tools,
+      capture fit images, and update the token counter.
 
     Shared by `GradioRunner` (one-shot fit) and `ChatRunner` (multi-turn).
     """
 
-    def on_progress(msg: str) -> None:
-        if "calling LLM" in msg:
-            state.log.append({"role": "user", "content": f"🤖 {msg}"})
-            push()
-
-    agent = Agent(
-        provider,
-        system_prompt=system_prompt,
-        session=session,
-        max_iterations=max_iterations,
-        max_input_tokens=max_input_tokens,
-        on_progress=on_progress,
-    )
-
-    # Wrap send_with_tools once, on this provider instance, so both
-    # `Agent.run` and `Agent.continue_chat` see the stop check + thinking hook.
-    orig_send = provider.send_with_tools
-
-    def wrapped_send(**kw):
-        if stop_event.is_set():
-            raise StopFitError("Stop requested by user")
-        response = orig_send(**kw)
+    def on_response(response) -> None:
         if show_thinking and response.thinking_text:
             state.log.append({
                 "role": "assistant",
                 "content": thinking_block(response.thinking_text),
             })
             push()
-        return response
 
-    provider.send_with_tools = wrapped_send  # type: ignore[method-assign]
-
-    # Wrap _invoke_tool to push UI updates after each tool dispatch.
-    orig_invoke = agent._invoke_tool
-
-    def wrapped_invoke(tc):
-        block = orig_invoke(tc)
-
-        last_turn = session.turns[-1]
-        result = last_turn.result
-        elapsed = last_turn.elapsed_s
-
+    def on_tool_end(tc, result, elapsed) -> None:
         state.log.append({
             "role": "assistant",
             "content": tool_event_line(tc.name, tc.args, result, elapsed),
@@ -377,10 +279,10 @@ def build_streaming_agent(
                 state.image = _b64_to_pil(b64)
 
         sid = session.pyirena_session_id
-        if tc.name in _PARAM_CHANGING_TOOLS and sid:
-            _state_tool = (fit_model.state_tool if fit_model else "get_model_parameters")
-            pr = dispatch(_state_tool, {"session_id": sid})
-            if _state_tool == "get_sizes_config":
+        if tc.name in MUTATING_TOOLS and sid:
+            state_tool = (fit_model.state_tool if fit_model else "get_model_parameters")
+            pr = dispatch(state_tool, {"session_id": sid})
+            if state_tool == "get_sizes_config":
                 state.params_md = sizes_config_to_markdown(pr)
             else:
                 state.params_md = params_to_markdown(pr)
@@ -396,9 +298,65 @@ def build_streaming_agent(
             cost,
         )
         push()
-        return block
 
-    agent._invoke_tool = wrapped_invoke  # type: ignore[method-assign]
+    return AgentHooks(
+        should_stop=stop_event.is_set,
+        on_response=on_response,
+        on_tool_end=on_tool_end,
+    )
+
+
+def build_streaming_run(
+    config: RunConfig,
+    *,
+    state: UIState,
+    push,
+    stop_event: threading.Event,
+    show_thinking: bool,
+):
+    """`core.run_setup.build_run` wired with the streaming GUI hooks.
+
+    Two-step construction because the hooks need the `RunSession` and
+    `FitModel`, which `build_run` creates: build once to obtain them, then
+    attach hooks to the same agent instance.
+    """
+
+    def on_progress(msg: str) -> None:
+        if "calling LLM" in msg or msg.startswith("warning:"):
+            state.log.append({"role": "user", "content": f"🤖 {msg}"})
+            push()
+
+    bundle = build_run(config, on_progress=on_progress)
+    bundle.agent.hooks = make_streaming_hooks(
+        session=bundle.session,
+        state=state,
+        push=push,
+        stop_event=stop_event,
+        show_thinking=show_thinking,
+        fit_model=bundle.fit_model,
+    )
+    return bundle
+
+
+def attach_streaming_hooks(
+    agent: Agent,
+    *,
+    session: RunSession,
+    state: UIState,
+    push,
+    stop_event: threading.Event,
+    show_thinking: bool,
+    fit_model: FitModel | None = None,
+) -> Agent:
+    """Attach streaming hooks to an already-built agent (ChatRunner path)."""
+    agent.hooks = make_streaming_hooks(
+        session=session,
+        state=state,
+        push=push,
+        stop_event=stop_event,
+        show_thinking=show_thinking,
+        fit_model=fit_model,
+    )
     return agent
 
 

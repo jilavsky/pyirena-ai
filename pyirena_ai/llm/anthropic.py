@@ -23,6 +23,29 @@ from pyirena_ai.llm.base import (
 class AnthropicProvider(LLMProvider):
     name = "anthropic"
 
+    _client = None  # lazily created, then reused across calls (connection pooling)
+
+    def _get_client(self):
+        if self._client is None:
+            try:
+                import anthropic  # noqa: PLC0415
+            except ImportError as e:
+                raise RuntimeError(
+                    "The 'anthropic' package is not installed. "
+                    "Install with: pip install \"pyirena-ai[anthropic]\""
+                ) from e
+            client_kwargs: dict[str, Any] = {
+                "api_key": self.api_key,
+                "timeout": self.timeout,
+                # SDK-level retry with backoff for transient failures
+                # (connection errors, 408/429/5xx).
+                "max_retries": 3,
+            }
+            if self.base_url:
+                client_kwargs["base_url"] = self.base_url
+            self._client = anthropic.Anthropic(**client_kwargs)
+        return self._client
+
     def send_with_tools(
         self,
         *,
@@ -31,18 +54,7 @@ class AnthropicProvider(LLMProvider):
         tools: list[dict],
         max_tokens: int = 4096,
     ) -> AssistantResponse:
-        try:
-            import anthropic  # noqa: PLC0415
-        except ImportError as e:
-            raise RuntimeError(
-                "The 'anthropic' package is not installed. "
-                "Install with: pip install \"pyirena-ai[anthropic]\""
-            ) from e
-
-        client_kwargs: dict[str, Any] = {"api_key": self.api_key, "timeout": self.timeout}
-        if self.base_url:
-            client_kwargs["base_url"] = self.base_url
-        client = anthropic.Anthropic(**client_kwargs)
+        client = self._get_client()
 
         create_kwargs: dict[str, Any] = {
             "model": self.model,

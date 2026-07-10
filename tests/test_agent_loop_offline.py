@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from pyirena_ai.core.agent import Agent
 from pyirena_ai.core.session import RunSession
 from pyirena_ai.llm.base import AssistantResponse, LLMProvider, ToolCall, Usage

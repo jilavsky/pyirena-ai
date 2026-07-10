@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyirena-ai"
-version = "0.0.1"
+dynamic = ["version"]
 description = "AI-driven SAXS/USAXS fitting on top of pyirena."
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
@@ -55,6 +55,7 @@ gui = [
 dev = [
     "pytest>=7.0",
     "pytest-cov",
+    "ruff>=0.4",
     "build",
     "twine",
 ]
@@ -79,12 +80,33 @@ pyirena-ai = "pyirena_ai.cli.main:main"
 [tool.setuptools.packages.find]
 include = ["pyirena_ai*"]
 
+[tool.setuptools.dynamic]
+version = {attr = "pyirena_ai.__version__"}
+
 [tool.setuptools.package-data]
 pyirena_ai = ["config/strategies/*.md", "config/skills/*.md"]
 
 [tool.black]
 line-length = 100
 target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Start conservative: correctness + import hygiene. Tighten over time.
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # long lines — manual formatting governs
+    "E241",   # whitespace after comma — aligned tables are used deliberately
+    "E221",   # multiple spaces before operator — same
+    "UP007",  # X | None vs Optional — either style is fine here
+    "B905",   # zip(strict=...) — not needed on py310
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pyirena_ai"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

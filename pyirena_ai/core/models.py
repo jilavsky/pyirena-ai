@@ -7,13 +7,16 @@ tool reports the live parameter state for the GUI panel. This registry is the
 single place those differences live, so the runners, the CLI, and the GUI never
 hardcode ``"unified_fit"`` again.
 
-The agent itself sees *all* control tools regardless of the selected model
-(``core/tools.py`` auto-exposes every ``pyirena.api.control.__all__`` function).
-The model selection only steers the *system prompt* (strategy + skill) and a few
-UI niceties — it never restricts the tool set.
+By default each fit model exposes only its relevant slice of the control
+surface to the LLM (``tool_groups`` → ``core/tools.py:schemas_for_groups``).
+Smaller local models (the beamline target) degrade when offered too many
+tools, so a Unified Fit run sees the shared + unified tools only, and a
+Sizes run sees shared + sizes. Pass ``tool_groups=None`` (CLI ``--all-tools``)
+to expose everything.
 
 Adding a new model (e.g. Modeling, Simple Fits) is a single ``FIT_MODELS`` entry
-plus a strategy/skill markdown pair.
+plus a strategy/skill markdown pair (and, ideally, group entries in
+``core/tools.py:TOOL_GROUPS`` for its tools).
 """
 
 from __future__ import annotations
@@ -29,6 +32,9 @@ class FitModel:
     default_strategy: str  # strategy file stem to default to
     save_tool: str         # control tool that persists the fit (one-shot prompt text)
     state_tool: str        # control tool that returns live model state (GUI panel)
+    tool_groups: tuple[str, ...] | None = None
+    """Tool groups exposed to the LLM (see core/tools.py:TOOL_GROUPS).
+    None means: expose the full control surface."""
 
 
 FIT_MODELS: dict[str, FitModel] = {
@@ -39,6 +45,7 @@ FIT_MODELS: dict[str, FitModel] = {
         default_strategy="unified_fit_default",
         save_tool="save_fit",
         state_tool="get_model_parameters",
+        tool_groups=("shared", "unified"),
     ),
     "size_distribution": FitModel(
         key="size_distribution",
@@ -47,6 +54,7 @@ FIT_MODELS: dict[str, FitModel] = {
         default_strategy="size_distribution_default",
         save_tool="save_sizes_fit",
         state_tool="get_sizes_config",
+        tool_groups=("shared", "sizes"),
     ),
 }
 

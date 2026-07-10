@@ -28,11 +28,18 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 
 # Built-in defaults shipped with the package. Used to initialise a fresh
 # config file and to fill any missing sections in an older one.
-DEFAULT_PROVIDERS: dict[str, dict[str, str]] = {
-    "anthropic": {"model": "claude-opus-4-7",       "base_url": ""},
-    "openai":    {"model": "gpt-4o",                "base_url": "https://api.openai.com/v1"},
-    "lmstudio":  {"model": "local-model",           "base_url": "http://localhost:1234/v1"},
-    "ollama":    {"model": "llama3.1",              "base_url": "http://localhost:11434/v1"},
+#
+# `vision` says whether tool-result images (fit plots) may be forwarded to
+# the model. Anthropic models are always vision-capable; for the
+# OpenAI-compatible providers it depends on the concrete model, so it is a
+# per-provider setting. Set `vision = true` for lmstudio/ollama when the
+# loaded local model accepts images (e.g. Gemma 3 12B/27B); text-only
+# models will error on image content if this is enabled.
+DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
+    "anthropic": {"model": "claude-opus-4-7", "base_url": "",                            "vision": True},
+    "openai":    {"model": "gpt-4o",          "base_url": "https://api.openai.com/v1",   "vision": True},
+    "lmstudio":  {"model": "local-model",     "base_url": "http://localhost:1234/v1",    "vision": False},
+    "ollama":    {"model": "llama3.1",        "base_url": "http://localhost:11434/v1",   "vision": False},
 }
 
 
@@ -41,6 +48,7 @@ class ProviderSettings:
     name:     str
     model:    str = ""
     base_url: str = ""
+    vision:   bool = False
 
 
 @dataclass
@@ -72,6 +80,7 @@ def load_settings() -> Settings:
             name=name,
             model=section.get("model", defaults["model"]),
             base_url=section.get("base_url", defaults["base_url"]),
+            vision=bool(section.get("vision", defaults["vision"])),
         )
     return Settings(providers=providers)
 
@@ -100,7 +109,9 @@ def update_provider(
 def _write_default_config() -> None:
     """Create CONFIG_FILE on disk with DEFAULT_PROVIDERS."""
     settings = Settings(providers={
-        name: ProviderSettings(name=name, model=d["model"], base_url=d["base_url"])
+        name: ProviderSettings(
+            name=name, model=d["model"], base_url=d["base_url"], vision=d["vision"],
+        )
         for name, d in DEFAULT_PROVIDERS.items()
     })
     _write_settings(settings)
@@ -112,6 +123,8 @@ def _write_settings(settings: Settings) -> None:
         "# pyirena-ai config — managed via `pyirena-ai` CLI.",
         "# API keys are NEVER stored here; they live in the OS keyring",
         "# under service name 'pyirena-ai'.",
+        "# `vision`: forward fit images to the model (set true only when the",
+        "# configured model accepts images; text-only models will error).",
         "",
     ]
     for name in sorted(settings.providers):
@@ -119,6 +132,7 @@ def _write_settings(settings: Settings) -> None:
         lines.append(f"[provider.{name}]")
         lines.append(f'model    = "{_toml_escape(p.model)}"')
         lines.append(f'base_url = "{_toml_escape(p.base_url)}"')
+        lines.append(f"vision   = {'true' if p.vision else 'false'}")
         lines.append("")
     CONFIG_FILE.write_text("\n".join(lines), encoding="utf-8")
 

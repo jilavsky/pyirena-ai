@@ -19,10 +19,24 @@ provider does two adapters:
 from __future__ import annotations
 
 import json
+import random
 import re
+import time
 from typing import Any
 
 import httpx
+
+from pyirena_ai.llm.base import (
+    AssistantResponse,
+    LLMProvider,
+    ToolCall,
+    Usage,
+)
+
+# Transient failures worth retrying: rate limit, timeout, server errors.
+_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+_MAX_ATTEMPTS = 4          # 1 initial + 3 retries
+_BACKOFF_BASE_S = 1.5
 
 # Magistral / other channel-style reasoning models prefix their reply with
 # <|channel>thinking text<channel|>. Extract it so the GUI / CLI can display
@@ -33,18 +47,18 @@ _CHANNEL_RE = re.compile(r"<\|channel>(.*?)<channel\|>\s*", flags=re.DOTALL)
 # `reasoning_content` response field (not in `content`) — a future addition
 # can read msg.get("reasoning") here when those endpoints are in scope.
 
-from pyirena_ai.llm.base import (
-    AssistantResponse,
-    LLMProvider,
-    ToolCall,
-    Usage,
-)
-
 
 class OpenAICompatProvider(LLMProvider):
     """Chat-completions over an OpenAI-compatible HTTP endpoint."""
 
     name = "openai_compat"
+
+    _client: httpx.Client | None = None  # reused across calls (connection pooling)
+
+    def _get_client(self) -> httpx.Client:
+        if self._client is None:
+            self._client = httpx.Client(timeout=self.timeout)
+        return self._client
 
     def send_with_tools(
         self,
@@ -61,13 +75,21 @@ class OpenAICompatProvider(LLMProvider):
             )
 
         oai_tools = [_anthropic_tool_to_openai(t) for t in tools]
-        oai_messages = _messages_anthropic_to_openai(system, messages)
+        oai_messages = _messages_anthropic_to_openai(
+            system, messages, forward_images=self.supports_vision
+        )
 
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": oai_messages,
-            "max_tokens": max_tokens,
         }
+        # Newer api.openai.com models reject `max_tokens` in favour of
+        # `max_completion_tokens`; local servers and proxies generally still
+        # expect `max_tokens`.
+        if "api.openai.com" in self.base_url:
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["max_tokens"] = max_tokens
         if oai_tools:
             payload["tools"] = oai_tools
             payload["tool_choice"] = "auto"
@@ -77,13 +99,57 @@ class OpenAICompatProvider(LLMProvider):
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         url = f"{self.base_url}/chat/completions"
-
-        with httpx.Client(timeout=self.timeout) as client:
-            r = client.post(url, headers=headers, json=payload)
-            r.raise_for_status()
-            data = r.json()
+        data = self._post_with_retries(url, headers, payload)
 
         return _openai_response_to_assistant(data)
+
+    def _post_with_retries(self, url: str, headers: dict, payload: dict) -> dict:
+        """POST with exponential backoff on transient failures.
+
+        Retries connection/timeout errors and 408/429/5xx responses (a
+        single momentary blip should not abort a long fitting run).
+        Honours a `Retry-After` header when present. Non-retryable HTTP
+        errors raise immediately.
+        """
+        client = self._get_client()
+        last_exc: Exception | None = None
+
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                r = client.post(url, headers=headers, json=payload)
+            except httpx.TransportError as e:
+                last_exc = e
+            else:
+                if r.status_code not in _RETRYABLE_STATUS:
+                    r.raise_for_status()
+                    return r.json()
+                last_exc = httpx.HTTPStatusError(
+                    f"HTTP {r.status_code} from {url}", request=r.request, response=r,
+                )
+                retry_after = _parse_retry_after(r.headers.get("retry-after"))
+                if attempt < _MAX_ATTEMPTS - 1:
+                    time.sleep(retry_after or _backoff_s(attempt))
+                    continue
+                raise last_exc
+
+            if attempt < _MAX_ATTEMPTS - 1:
+                time.sleep(_backoff_s(attempt))
+
+        raise last_exc  # type: ignore[misc]  # loop always sets it before falling through
+
+
+def _backoff_s(attempt: int) -> float:
+    """Exponential backoff with jitter: ~1.5s, ~3s, ~6s."""
+    return _BACKOFF_BASE_S * (2 ** attempt) * (0.5 + random.random())
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +172,21 @@ def _anthropic_tool_to_openai(tool: dict) -> dict:
 # Outgoing message adapter
 # ---------------------------------------------------------------------------
 
-def _messages_anthropic_to_openai(system: str, messages: list[dict]) -> list[dict]:
+def _messages_anthropic_to_openai(
+    system: str, messages: list[dict], *, forward_images: bool = False,
+) -> list[dict]:
     """Anthropic-shaped message list → OpenAI-shaped message list.
 
     Anthropic interleaves tool_use / tool_result blocks inside assistant /
     user messages; OpenAI splits them into separate `assistant` (with
     `tool_calls`) and `tool` (with `tool_call_id`) messages.
+
+    OpenAI `tool` messages take a plain string, so images inside tool
+    results cannot ride along directly. When `forward_images` is True
+    (vision-capable endpoint) each tool-result image is re-attached as an
+    immediately following `user` message with an `image_url` block, so the
+    visual-feedback loop (model inspecting the fit plot) works the same as
+    on Anthropic. When False, images are replaced with a placeholder note.
     """
     out: list[dict] = []
     if system:
@@ -158,6 +233,17 @@ def _messages_anthropic_to_openai(system: str, messages: list[dict]) -> list[dic
                         "tool_call_id": block.get("tool_use_id", ""),
                         "content": _tool_result_to_openai_string(block.get("content")),
                     })
+                    if forward_images:
+                        image_blocks = _tool_result_images_to_openai(block.get("content"))
+                        if image_blocks:
+                            out.append({
+                                "role": "user",
+                                "content": (
+                                    [{"type": "text",
+                                      "text": "Image returned by the tool call above:"}]
+                                    + image_blocks
+                                ),
+                            })
                 elif btype == "text":
                     user_blocks.append({"type": "text", "text": block.get("text", "")})
                 elif btype == "image":
@@ -200,14 +286,32 @@ def _as_blocks(content: Any) -> list[dict]:
     return [{"type": "text", "text": str(content)}]
 
 
+def _tool_result_images_to_openai(result_content: Any) -> list[dict]:
+    """Extract image blocks from Anthropic tool_result content as OpenAI
+    `image_url` blocks (data URLs). Empty list if there are none."""
+    if not isinstance(result_content, list):
+        return []
+    images: list[dict] = []
+    for block in result_content:
+        if not isinstance(block, dict) or block.get("type") != "image":
+            continue
+        src = block.get("source", {}) or {}
+        if src.get("type") == "base64" and src.get("data"):
+            media = src.get("media_type", "image/png")
+            images.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{media};base64,{src['data']}"},
+            })
+    return images
+
+
 def _tool_result_to_openai_string(result_content: Any) -> str:
     """Flatten Anthropic tool_result content into a single string for OpenAI.
 
     Anthropic tool_result.content is a list of {type:text|image,...} blocks.
-    OpenAI's `tool` message takes a plain string. Images embedded in the
-    tool result are dropped here with a placeholder; for a vision-aware
-    follow-up we would need to re-attach them as a separate user image
-    message.
+    OpenAI's `tool` message takes a plain string. Images are noted with a
+    placeholder here; on vision-capable endpoints the caller re-attaches
+    them as a following user message (see `_messages_anthropic_to_openai`).
     """
     if isinstance(result_content, str):
         return result_content
@@ -221,7 +325,10 @@ def _tool_result_to_openai_string(result_content: Any) -> str:
             if btype == "text":
                 parts.append(block.get("text", ""))
             elif btype == "image":
-                parts.append("[image attachment — not forwarded in this turn]")
+                parts.append(
+                    "[the tool returned an image — attached as the next "
+                    "user message if this endpoint supports vision]"
+                )
             else:
                 parts.append(json.dumps(block))
         return "\n".join(parts)

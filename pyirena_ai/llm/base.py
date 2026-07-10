@@ -44,7 +44,7 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
 
-    def add(self, other: "Usage") -> None:
+    def add(self, other: Usage) -> None:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
 
@@ -79,12 +79,17 @@ class LLMProvider(ABC):
         base_url: str = "",
         timeout: float = 120.0,
         enable_thinking: bool = False,
+        supports_vision: bool = True,
     ):
         self.api_key = api_key
         self.model = model
         self.base_url = (base_url or "").rstrip("/")
         self.timeout = timeout
         self.enable_thinking = enable_thinking
+        self.supports_vision = supports_vision
+        """Whether tool-result images (fit plots) may be sent to this model.
+        Anthropic models always accept images; OpenAI-compatible endpoints
+        depend on the concrete model, configured per provider in config.toml."""
 
     @abstractmethod
     def send_with_tools(

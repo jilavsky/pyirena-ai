@@ -399,15 +399,14 @@ def build_app():
             if not file_path:
                 yield None, "_No file path entered._", [], "", "error: no file"
                 return
-            for state_tuple in fit_runner.stream(
+            yield from fit_runner.stream(
                 file_path, provider, model_id or "", base_url or "",
                 strategy, user_context or "",
                 include_strategy=inc_strategy,
                 include_skills=inc_skills,
                 show_thinking=show_thinking,
                 model_key=model_key or "unified_fit",
-            ):
-                yield state_tuple
+            )
 
         fit_btn.click(
             fn=on_fit,

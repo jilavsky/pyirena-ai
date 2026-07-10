@@ -54,6 +54,7 @@ def build_provider(
     base_url: str = "",
     timeout: float = 120.0,
     enable_thinking: bool = False,
+    supports_vision: bool = True,
 ) -> LLMProvider:
     """Instantiate the provider class registered under `name`."""
     try:
@@ -68,4 +69,5 @@ def build_provider(
         base_url=base_url,
         timeout=timeout,
         enable_thinking=enable_thinking,
+        supports_vision=supports_vision,
     )

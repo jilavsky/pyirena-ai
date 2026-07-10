@@ -24,14 +24,12 @@ from __future__ import annotations
 import queue
 import threading
 import traceback
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator, Optional
 
-from pyirena_ai.config.keyring_io import get_api_key
-from pyirena_ai.config.settings import load_settings
 from pyirena_ai.core.agent import Agent
-from pyirena_ai.core.audit import write_audit_json
 from pyirena_ai.core.models import get_model
+from pyirena_ai.core.run_setup import RunConfig, finish_run
 from pyirena_ai.core.session import RunSession
 from pyirena_ai.core.skills import build_system_prompt
 from pyirena_ai.core.strategy import load_strategy
@@ -46,10 +44,9 @@ from pyirena_ai.gui.runner import (
     StopFitError,
     UIState,
     _pump_queue,
-    build_streaming_agent,
+    build_streaming_run,
 )
 from pyirena_ai.llm.pricing import estimate_cost_usd
-from pyirena_ai.llm.registry import agent_defaults, build_provider
 
 
 class ChatRunner:
@@ -58,8 +55,8 @@ class ChatRunner:
     def __init__(self) -> None:
         self._stop = threading.Event()
         self._q: queue.Queue[UIState] = queue.Queue()
-        self._session: Optional[RunSession] = None
-        self._agent: Optional[Agent] = None
+        self._session: RunSession | None = None
+        self._agent: Agent | None = None
         self._state: UIState = UIState(status="idle")
         self._file_path: str = ""
         self._session_params: dict = {}  # Store params for reload_system_prompt()
@@ -128,46 +125,35 @@ class ChatRunner:
                 push("error: no file")
                 return
 
-            settings = load_settings()
-            prov_cfg = settings.get(provider_name)
-            model_id = model_id or prov_cfg.model
-            base_url = base_url or prov_cfg.base_url
-            api_key = get_api_key(provider_name)
-
-            provider = build_provider(
-                provider_name,
-                api_key=api_key,
-                model=model_id,
-                base_url=base_url,
-                enable_thinking=show_thinking,
-            )
-
-            try:
-                strategy_text = load_strategy(strategy) if include_strategy else ""
-            except KeyError as e:
-                self._state.log.append({"role": "assistant", "content": f"⚠ {e}"})
-                push("error: strategy not found")
-                return
-
-            fit_model = get_model(model_key)
-
-            system_prompt = build_system_prompt(
-                strategy_text,
-                tool_name=fit_model.skill,
-                extra_context=user_context,
-                include_strategy=include_strategy,
-                include_skills=include_skills,
-            )
-
-            self._session = RunSession(
-                input_file=file_path,
-                provider=provider_name,
-                model=model_id,
+            config = RunConfig(
+                file_path=file_path,
+                provider_name=provider_name,
+                model_id=model_id,
                 base_url=base_url,
                 strategy=strategy,
-                system_prompt=system_prompt,
+                model_key=model_key,
+                user_context=user_context,
+                include_strategy=include_strategy,
+                include_skills=include_skills,
+                show_thinking=show_thinking,
             )
-            self._file_path = file_path
+            try:
+                bundle = build_streaming_run(
+                    config,
+                    state=self._state,
+                    push=push,
+                    stop_event=self._stop,
+                    show_thinking=show_thinking,
+                )
+            except KeyError as e:
+                self._state.log.append({"role": "assistant", "content": f"⚠ {e}"})
+                push("error: bad configuration")
+                return
+
+            model_id = bundle.model_id
+            self._session = bundle.session
+            self._agent = bundle.agent
+            self._file_path = bundle.session.input_file
             self._session_params = {
                 "strategy": strategy,
                 "user_context": user_context,
@@ -179,10 +165,10 @@ class ChatRunner:
             # Open the dataset directly (no LLM round-trip — we know the path).
             import time
             t0 = time.monotonic()
-            open_result = dispatch("open_dataset", {"file_path": file_path})
+            open_result = dispatch("open_dataset", {"file_path": self._file_path})
             self._session.add_tool_use(
                 tool="open_dataset",
-                args={"file_path": file_path},
+                args={"file_path": self._file_path},
                 result=open_result,
                 elapsed_s=time.monotonic() - t0,
             )
@@ -196,20 +182,6 @@ class ChatRunner:
             sid = open_result.get("session_id", "")
             n_points = open_result.get("n_points", "?")
             self._session.pyirena_session_id = sid
-
-            prov_defaults = agent_defaults(provider_name)
-            self._agent = build_streaming_agent(
-                provider=provider,
-                system_prompt=system_prompt,
-                session=self._session,
-                state=self._state,
-                push=push,
-                stop_event=self._stop,
-                show_thinking=show_thinking,
-                max_iterations=prov_defaults["max_iterations"],
-                max_input_tokens=prov_defaults["max_input_tokens"],
-                fit_model=fit_model,
-            )
 
             # Seed the conversation: tell the agent which dataset is open,
             # what tools are available, and that the user will now ask
@@ -394,22 +366,15 @@ class ChatRunner:
         audit_path_str = ""
         if self._session:
             try:
-                cost = estimate_cost_usd(
-                    self._session.model,
-                    self._session.input_tokens,
-                    self._session.output_tokens,
+                audit_path = finish_run(
+                    self._session,
+                    audit_path=_chat_audit_path(Path(self._file_path)),
                 )
-                self._session.cost_usd_estimate = cost
-                audit_path = _chat_audit_path(Path(self._file_path))
-                write_audit_json(self._session, audit_path)
                 audit_path_str = str(audit_path)
                 self._state.log.append({
                     "role": "assistant",
                     "content": f"📄 Audit trail: `{audit_path}`",
                 })
-                sid = self._session.pyirena_session_id
-                if sid:
-                    dispatch("close_session", {"session_id": sid})
             except Exception:
                 pass
 

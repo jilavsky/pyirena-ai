@@ -19,25 +19,15 @@ from pathlib import Path
 from pyirena_ai import __version__
 from pyirena_ai.config.keyring_io import (
     KEY_NAMES,
-    get_api_key,
     have_api_key,
     set_api_key,
 )
-from pyirena_ai.config.settings import (
-    DEFAULT_PROVIDERS,
-    load_settings,
-    summarise_for_cli,
-)
-from pyirena_ai.core.agent import Agent
-from pyirena_ai.core.audit import default_audit_path, write_audit_json
-from pyirena_ai.core.models import get_model
-from pyirena_ai.core.session import RunSession
-from pyirena_ai.core.skills import build_system_prompt
+from pyirena_ai.config.settings import load_settings, summarise_for_cli
+from pyirena_ai.core.agent import AgentHooks
+from pyirena_ai.core.run_setup import RunConfig, build_run, finish_run
+from pyirena_ai.core.strategy import list_strategies
 from pyirena_ai.gui.formatting import clean_llm_text
-from pyirena_ai.core.strategy import list_strategies, load_strategy
-from pyirena_ai.core.tools import dispatch
-from pyirena_ai.llm.pricing import estimate_cost_usd
-from pyirena_ai.llm.registry import agent_defaults, build_provider, known_providers
+from pyirena_ai.llm.registry import known_providers
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Drop the fitting strategy from the system prompt "
                             "(diagnostic — useful for seeing how an agent behaves "
                             "with only tool descriptions + expert skills).")
+    p_fit.add_argument("--all-tools", action="store_true",
+                       help="Expose the full pyirena control surface to the LLM "
+                            "instead of only the selected model's tool subset. "
+                            "The subset is the default because small local models "
+                            "handle fewer tools better.")
     p_fit.add_argument("--no-skills", action="store_true",
                        help="Drop the bundled expert-skills block from the system "
                             "prompt (diagnostic — same idea as --no-strategy).")
@@ -184,24 +179,12 @@ def cmd_gui(args: argparse.Namespace) -> int:
 
 
 def cmd_fit(args: argparse.Namespace) -> int:
-    input_path = Path(args.input).resolve()
+    input_path = Path(args.input.strip().strip("'\"")).resolve()
     if not input_path.is_file():
         print(f"error: input file not found: {input_path}", file=sys.stderr)
         return 2
 
-    settings = load_settings()
-
-    try:
-        provider_settings = settings.get(args.provider)
-    except KeyError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-
-    model_id = args.model_id or provider_settings.model
-    base_url = args.base_url or provider_settings.base_url
-    api_key  = get_api_key(args.provider)
-
-    if not api_key and args.provider in ("anthropic", "openai"):
+    if not have_api_key(args.provider) and args.provider in ("anthropic", "openai"):
         print(
             f"error: no API key found for {args.provider!r}. "
             f"Run: pyirena-ai set-key {args.provider}",
@@ -209,92 +192,55 @@ def cmd_fit(args: argparse.Namespace) -> int:
         )
         return 2
 
-    fit_model = get_model(args.model)
-    strategy_name = args.strategy or fit_model.default_strategy
+    progress = (lambda msg: print(msg, file=sys.stderr)) if args.verbose else None
+
+    hooks = AgentHooks()
+    if args.show_thinking:
+        # Print each turn's reasoning to stdout above the visible text.
+        def _print_thinking(response) -> None:
+            if response.thinking_text:
+                print("\n[thinking]")
+                print(response.thinking_text)
+                print("[/thinking]\n")
+
+        hooks.on_response = _print_thinking
+
+    config = RunConfig(
+        file_path=str(input_path),
+        provider_name=args.provider,
+        model_id=args.model_id,
+        base_url=args.base_url,
+        strategy=args.strategy,
+        model_key=args.model,
+        user_context=args.context,
+        include_strategy=not args.no_strategy,
+        include_skills=not args.no_skills,
+        show_thinking=args.show_thinking,
+        all_tools=args.all_tools,
+        max_tokens_per_turn=args.max_tokens,
+        max_iterations=args.max_iterations,
+    )
 
     try:
-        strategy_text = load_strategy(strategy_name)
+        bundle = build_run(config, hooks=hooks, on_progress=progress)
     except KeyError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    system_prompt = build_system_prompt(
-        strategy_text,
-        tool_name=fit_model.skill,
-        extra_context=args.context,
-        include_strategy=not args.no_strategy,
-        include_skills=not args.no_skills,
-    )
-
-    progress = (lambda msg: print(msg, file=sys.stderr)) if args.verbose else None
-
-    provider = build_provider(
-        args.provider,
-        api_key=api_key,
-        model=model_id,
-        base_url=base_url,
-        enable_thinking=args.show_thinking,
-    )
-
+    session = bundle.session
     save_out = args.save_out or str(input_path)
-    user_prompt = _build_user_prompt(input_path, save_out, fit_model.save_tool)
-
-    session = RunSession(
-        input_file=str(input_path),
-        provider=args.provider,
-        model=model_id,
-        base_url=base_url,
-        strategy=strategy_name,
-        system_prompt=system_prompt,
-    )
-
-    prov_defaults = agent_defaults(args.provider)
-    max_iter = args.max_iterations or prov_defaults["max_iterations"]
-
-    if args.show_thinking:
-        # Print each turn's reasoning to stdout above the visible text.
-        _orig_send = provider.send_with_tools
-
-        def _send_with_thinking_print(**kw):
-            resp = _orig_send(**kw)
-            if resp.thinking_text:
-                print("\n[thinking]")
-                print(resp.thinking_text)
-                print("[/thinking]\n")
-            return resp
-
-        provider.send_with_tools = _send_with_thinking_print  # type: ignore[method-assign]
-
-    agent = Agent(
-        provider,
-        system_prompt=system_prompt,
-        session=session,
-        max_iterations=max_iter,
-        max_input_tokens=prov_defaults["max_input_tokens"],
-        max_tokens_per_turn=args.max_tokens,
-        on_progress=progress,
-    )
+    user_prompt = _build_user_prompt(input_path, save_out, bundle.fit_model.save_tool)
 
     try:
-        final = agent.run(user_prompt)
+        final = bundle.agent.run(user_prompt)
     except Exception as e:  # provider / network / SDK errors
         session.add_error(f"{type(e).__name__}: {e}")
-        audit_path = Path(args.audit_out) if args.audit_out else default_audit_path(input_path)
-        write_audit_json(session, audit_path)
+        audit_path = finish_run(session, audit_path=args.audit_out or None)
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         print(f"(partial audit written to {audit_path})", file=sys.stderr)
         return 3
 
-    session.cost_usd_estimate = estimate_cost_usd(
-        model_id, session.input_tokens, session.output_tokens
-    )
-
-    # Make sure pyirena's in-memory session, if still open, is released.
-    if session.pyirena_session_id:
-        dispatch("close_session", {"session_id": session.pyirena_session_id})
-
-    audit_path = Path(args.audit_out) if args.audit_out else default_audit_path(input_path)
-    write_audit_json(session, audit_path)
+    audit_path = finish_run(session, audit_path=args.audit_out or None)
 
     print()
     print(clean_llm_text(final.text) or "(no final assistant text)")
