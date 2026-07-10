@@ -10,6 +10,10 @@ that ships with `pyirena`. Phase 1 covers Unified Fit (Beaucage) through a
 command-line agent loop; future phases add a GUI, folder/batch mode, and
 support for more pyirena models.
 
+**Documentation:** [docs/](docs/) — [installation](docs/installation.md) ·
+[provider configuration](docs/providers.md) (incl. the `vision` flag for
+local models) · [usage](docs/usage.md).
+
 See [planning/ai-agent/](planning/ai-agent/) for the full design.
 
 ---
@@ -100,19 +104,28 @@ run). Example:
 [provider.anthropic]
 model    = "claude-opus-4-7"
 base_url = ""                                    # default
+vision   = true
 
 [provider.openai]
 model    = "gpt-4o"
 base_url = "https://api.openai.com/v1"
+vision   = true
 
 [provider.lmstudio]
-model    = "local-model"
+model    = "gemma-3-27b-it"
 base_url = "http://localhost:1234/v1"
+vision   = true    # set true ONLY for vision-capable local models
 
 [provider.ollama]
 model    = "llama3.1"
 base_url = "http://localhost:11434/v1"
+vision   = false
 ```
+
+`vision` controls whether fit-plot images are forwarded to the model — the
+agent's visual feedback loop. **Set `vision = true` for vision-capable local
+models (e.g. Gemma); leave `false` for text-only models**, which error on
+image content. Details in [docs/providers.md](docs/providers.md).
 
 API keys are stored in the OS keyring under service name `pyirena-ai` — the
 same store used by `pyirena`'s in-GUI AI advisor, so if you've already
