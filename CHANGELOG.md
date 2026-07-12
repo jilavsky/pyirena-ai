@@ -6,6 +6,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — Size Distribution strategy & skill (broad-distribution fits)
+- **Reframed the Size Distribution strategy and skill docs** so the agent treats
+  the common case correctly: a **broad size distribution on a low-Q power law +
+  high-Q flat background** (precipitates in metals; pores in rocks / minerals /
+  solids) is the normal, expected use — not a disqualifier. Removed the "single
+  dilute population / must have a Guinier knee" framing that made the agent refuse
+  these routine datasets.
+- **Suitability handling:** `suggest_sizes_setup`'s `suitable=false` and its
+  "multiple knees / several levels" warnings are now advisory. The agent only
+  defers to Unified Fit when there is genuinely no signal above background or the
+  structure is clearly hierarchical with distinct populations to separate.
+- **Q-range guidance:** documented the key rule — fit only where the particle
+  signal is clearly above the complex background (I(Q) ≳ 2× background; less if
+  weak) and keep the noisy, background-dominated high-Q tail out of the inversion
+  even though the background is subtracted.
+- **Power-law exponent convention:** fix P = 4 (Porod) for powders / discrete
+  particles; let P float between 3 and 4 (never below 3) for solid / bulk
+  materials. Added use of the new `flat_background` recommendation as a sanity
+  check.
+
 ### Added — backend hardening & growth refactor (2026-07, `backend-improvements` branch)
 - **Per-model tool filtering** (`core/tools.py:TOOL_GROUPS`,
   `schemas_for_groups`, `FitModel.tool_groups`): the LLM now sees only the

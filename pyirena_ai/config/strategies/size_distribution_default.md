@@ -8,13 +8,27 @@ skip steps.
 
 ## When this model applies
 
-A size distribution is appropriate **only** for a dilute sample with a single,
-identifiable particle population over a limited size range. It is *not* a
-general-purpose model. If the data shows multi-level hierarchical structure
-(several Guinier knees / power-law regions), the **Unified Fit** model is the
-right tool — say so and stop rather than forcing a size-distribution fit.
+A size distribution recovers the volume distribution of scatterer sizes over the
+Q-band where their signal sits above the background. This is one of the most
+common SAXS/USAXS analyses: **broad size distributions of precipitates in metals,
+or pores/voids in rocks, minerals, and solids**, sitting on a low-Q power-law
+upturn and a high-Q flat background. These are the *bread-and-butter* case — a
+broad distribution is normal and expected.
 
-`suggest_sizes_setup` (step 2) decides suitability for you — honor its verdict.
+Do **not** require a single dilute population or a clean Guinier knee. A broad
+distribution has no sharp knee and scatters as a smoothly rolling, power-law-like
+region; that is exactly what you fit, not a disqualifier. The size-distribution
+result is routinely cross-checked against other techniques (porosity, imaging)
+and agrees well even though the sphere/spheroid form factor is an idealisation
+(real pores are not spheres).
+
+Prefer **Unified Fit** only for genuinely *hierarchical, multi-population*
+structure — several clearly distinct Guinier knees at different size scales that
+you want to characterise separately. When in doubt for a single broad population,
+a size distribution over the recommended Q-range is the right call.
+
+`suggest_sizes_setup` (step 2) recommends the setup and flags suitability; its
+`warnings` are advisory context, not a stop sign (see step 2).
 
 ## Background
 
@@ -38,14 +52,21 @@ heuristic, error handling, and how to read the results. Key facts you will use:
 
 2. **`suggest_sizes_setup(session_id)`** — call this BEFORE configuring anything.
    It returns `suitable` (bool), a `recommended` block (`r_min`, `r_max`,
-   `inversion_q_min/max`, `power_law_q_min/max`, `background_q_min/max`), and
-   `warnings`.
-   - If `suitable` is **false**: report the `warnings` plainly. If they indicate
-     hierarchical/multi-population structure, recommend the Unified Fit model and
-     stop. Only proceed to a forced fit if the user explicitly asks.
-   - If `suitable` is **true**: use the `recommended` values as your starting
-     point for the steps below. Some `recommended` windows may be `null` (e.g.
-     no power-law background) — skip the corresponding fit when so.
+   `inversion_q_min/max`, `power_law_q_min/max`, `background_q_min/max`,
+   `flat_background`), and `warnings`. The recommended inversion Q-range is chosen
+   where the particle signal is at least ~2× the fitted background, and `r_min`/
+   `r_max` are `π/Q` over that range, rounded outward to tidy values.
+   - If `suitable` is **true** (the usual case, including broad distributions on a
+     power-law + flat background): use the `recommended` values as your starting
+     point. A `null` window means that term wasn't needed — skip the
+     corresponding fit.
+   - If `suitable` is **false**: it means no Q-band with clearly discernible
+     particle signal was found. Read the `warnings`. **Do not refuse solely
+     because of a "multiple knees" or "several levels" note** — a broad single
+     distribution still applies. Only recommend Unified Fit (and stop) when the
+     data are genuinely hierarchical with distinct populations the user wants
+     separated, or when there is truly no signal above background. Otherwise
+     proceed with the recommended range and note the caveat in your report.
 
 3. **`select_sizes_model(session_id, method="maxent")`.**
 
@@ -64,19 +85,39 @@ heuristic, error handling, and how to read the results. Key facts you will use:
    the file σ are unreliable.
 
 7. **Complex background — fit each term over its own window, then confirm.**
+   The complex background is `power_law_B·q^(-power_law_P) + flat`. Fit it FIRST;
+   the inversion works on the background-subtracted data.
    - If `recommended.power_law_q_min/max` is present:
      `fit_power_law_background(session_id, q_min=…, q_max=…)` over that low-Q
-     steep-slope window.
+     steep-slope window. **Power-law exponent P convention:**
+     - **Powders / discrete particles** (e.g. precipitates in a metal matrix
+       measured as a powder): fix **P = 4** (Porod) — pass `fit_P=False`.
+     - **Solid / bulk materials** (pores in rock, minerals, solids): let P
+       **float between 3 and 4** (`fit_P=True`), but never below 3. If a free fit
+       returns P < 3, clamp/fix it at 3–4.
+     - If unsure, start with P = 4 fixed.
    - If `recommended.background_q_min/max` is present:
      `fit_flat_background(session_id, q_min=…, q_max=…)` over that high-Q flat
-     window (run AFTER the power-law fit when both are present).
+     window (run AFTER the power-law fit when both are present). The recommended
+     `flat_background` value is a good sanity check for the fitted level.
    - `get_background_preview_image(session_id)` — visually confirm the
      background tracks the data's baseline before inverting. If it is clearly
      wrong, adjust the windows (or `set_background` directly) and re-preview.
 
 8. **`set_fit_q_range(session_id, q_min=…, q_max=…)`** — set the **inversion
-   window** to `recommended.inversion_q_min/max` (the particle / Guinier-knee
-   region). This is the shared Q-range tool.
+   window** to `recommended.inversion_q_min/max`. This is the shared Q-range tool.
+   **Choosing the window is the most important decision.** The rule: fit only the
+   Q-band where the particle signal is *clearly discernible above the complex
+   background* — as a guide, where I(Q) is at least ~2× the background (less is OK
+   when the signal is genuinely weak). The recommendation already applies this.
+   - Even though the background is subtracted, **do not extend the high-Q end into
+     the background-dominated, noisy tail.** There the model cannot describe the
+     data and the inversion fits noise, which destabilises Regularization/Monte
+     Carlo and distorts P(r) — pull the high-Q end back to where signal is real.
+   - Likewise keep the low-Q end above the steep power-law upturn.
+   - After setting the inversion window, if you changed it substantially, update
+     the size grid too — either reuse `recommended.r_min/r_max` or derive
+     `r ≈ π/Q` over the new window (round outward so the grid brackets the range).
 
 9. **`run_sizes_fit(session_id, random_seed=42)`** — returns `success`,
    `chi_squared`, `volume_fraction`, `rg`, `peak_r`, `n_iterations`.
@@ -111,8 +152,10 @@ primarily from `get_sizes_fit_image`:
 
 If P(r) is jagged → increase `error_scale` (or use fractional errors) and refit.
 If P(r) is piled at an edge → widen the grid and refit.
-If the model misses the data shape badly even with a good background → the data
-may not be a single dilute population; consider Unified Fit.
+If the model misses the data shape badly even with a good background → first
+re-check the inversion Q-range (are you including background-dominated high-Q?)
+and the background fit. Only if the shape still cannot be matched — and the misfit
+looks like distinct hierarchical populations — consider Unified Fit.
 
 ## Operational rules
 
@@ -133,6 +176,8 @@ Stop when **any** hold:
 - The image shows the model tracking the data and a plausible, edge-free P(r) →
   proceed to save.
 - ≥ 6 fits with no meaningful improvement in the image/P(r).
-- `suggest_sizes_setup` said the data is unsuitable and the user did not override
-  → recommend Unified Fit and stop.
+- `suggest_sizes_setup` returned `suitable=false` **and** the reason is genuinely
+  no signal above background or clearly distinct hierarchical populations the user
+  wants separated → recommend Unified Fit and stop. (A "multiple knees / several
+  levels" note alone is **not** a reason to stop on a broad single population.)
 - Tool error (file missing, empty Q range) — surface it.

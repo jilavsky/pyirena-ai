@@ -14,21 +14,32 @@ I(Q) − background  ≈  contrast · ∫ P(r) · |F(Q, r)|² · V(r) dr
 ```
 
 where `F` is the sphere (or spheroid) form factor. It answers "what mix of
-particle sizes produces this curve?" for a **single dilute population**. It is
-the wrong tool for hierarchical / multi-level structure — use Unified Fit there.
+particle sizes produces this curve?" The classic, everyday use is a **broad size
+distribution** of precipitates in metals or pores/voids in rocks, minerals, and
+solids — sitting on a low-Q power-law upturn and a high-Q flat background. A broad
+distribution is normal; it has no sharp Guinier knee and looks power-law-like over
+its range. The sphere/spheroid form factor is an idealisation (real pores aren't
+spheres) yet the recovered size representation and porosity-vs-size agree well
+with other techniques. Reserve **Unified Fit** for genuinely hierarchical,
+multi-population structure (several distinct size scales to characterise
+separately).
 
 ## Suitability — read `suggest_sizes_setup` first
 
 `suggest_sizes_setup(session_id)` inspects the data and returns:
-- `suitable` — whether the curve looks like one viable size-distribution
-  candidate.
+- `suitable` — true when a Q-band with particle signal clearly above the
+  background exists (the usual case for broad-distribution + background data).
 - `recommended` — `r_min`, `r_max`, `inversion_q_min/max`,
-  `power_law_q_min/max`, `background_q_min/max` (any window may be `null`).
-- `warnings` — e.g. *no Guinier knee* (no size scale), *multiple populations*
-  (use Unified Fit), *limited Q dynamic range*.
+  `power_law_q_min/max`, `background_q_min/max`, `flat_background` (any window may
+  be `null`). The inversion range is where I(Q) ≳ 2× background; `r_min`/`r_max`
+  are `π/Q` over that range, rounded outward.
+- `warnings` — advisory context (e.g. *narrow signal band*, *multiple knees*,
+  *weak signal*). A "multiple knees / several levels" note is **not** a reason to
+  refuse — a broad single distribution still applies.
 
-Treat these as the authoritative starting point. If `suitable` is false, prefer
-Unified Fit over forcing the inversion.
+Treat these as the authoritative starting point. Only prefer Unified Fit over the
+inversion when `suitable=false` because there is no signal above background, or
+the data are clearly hierarchical with distinct populations to separate.
 
 ## Inversion methods
 
@@ -78,12 +89,24 @@ Set the two terms either directly (`set_background`) or by fitting each over its
 own Q-window:
 - `fit_power_law_background(q_min, q_max, fit_B, fit_P)` — the low-Q steep-slope
   region (large-scale scattering / upturn you don't want in the inversion).
+  **Exponent P convention:** fix **P = 4** (Porod, `fit_P=False`) for powders /
+  discrete particles; let P **float between 3 and 4** (`fit_P=True`) for solid /
+  bulk materials (pores in rock, minerals), never below 3; start from P = 4 if
+  unsure.
 - `fit_flat_background(q_min, q_max)` — the high-Q flat tail (incoherent /
   constant background). Run after the power-law fit when both are present.
+  `recommended.flat_background` is a good sanity check on the level.
 
 These windows use the **full data Q**, independent of the inversion Q-range.
 Always confirm with `get_background_preview_image` before inverting — a wrong
 background is the most common cause of a bad or distorted P(r).
+
+**Choosing the inversion Q-range** is the key decision: fit only where the
+particle signal is clearly discernible above the complex background (guide:
+I(Q) ≳ 2× background; less if the signal is genuinely weak). Do **not** push the
+high-Q end into the noisy, background-dominated tail — even though the background
+is subtracted, the model cannot describe that region and the inversion will fit
+noise, which destabilises Regularization / Monte Carlo and distorts P(r).
 
 ## Reading the results
 
