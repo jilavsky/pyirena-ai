@@ -61,9 +61,37 @@ def build_app():
     fit_runner = GradioRunner()
 
     # -----------------------------------------------------------------------
+    # Theme  (readability-tuned)
+    # -----------------------------------------------------------------------
+    # The theme MUST be set on gr.Blocks — Gradio's launch() does not accept a
+    # `theme` argument, so a previous `demo.launch(theme="soft")` was silently
+    # ignored and the app fell back to the plain default scheme.
+    #
+    # To experiment, swap the base theme (gr.themes.Soft / Default / Monochrome /
+    # Glass / Base), adjust `text_size` for global font size, or change the
+    # `.set(...)` colour tokens below for contrast. For dark mode, append
+    # `?__theme=dark` to the URL (http://127.0.0.1:7860/?__theme=dark) — no code
+    # change needed.
+    theme = gr.themes.Soft(
+        primary_hue="blue",
+        neutral_hue="slate",
+        text_size=gr.themes.sizes.text_lg,      # larger text everywhere
+    ).set(
+        body_text_color="#111111",              # darker body text (more contrast)
+        body_background_fill="#ffffff",
+        block_background_fill="#ffffff",
+        input_background_fill="#ffffff",
+        border_color_primary="#8a8a8a",         # more visible element borders
+    )
+
+    # -----------------------------------------------------------------------
     # Layout
     # -----------------------------------------------------------------------
-    with gr.Blocks(title="pyirena-ai · SAXS Fitting Agent") as demo:
+    with gr.Blocks(
+        title="pyirena-ai · SAXS Fitting Agent",
+        theme=theme,
+        css=".gradio-container { font-size: 16px; }",   # optional global bump
+    ) as demo:
         gr.Markdown(
             "# pyirena-ai · SAXS Fitting Agent\n"
             "Paste the path to a NXcanSAS HDF5 file. "
@@ -519,11 +547,12 @@ def launch(
     share: bool = False,
 ) -> None:
     demo = build_app()
+    # Note: the theme is configured on gr.Blocks in build_app(); launch() does
+    # not accept a `theme` argument.
     demo.launch(
         server_name=host,
         server_port=port,
         share=share,
-        theme="soft",
     )
 
 
