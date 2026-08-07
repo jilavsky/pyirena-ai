@@ -1,0 +1,265 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pyirena.local/reference-library/entry.schema.json",
+  "title": "pyirena reference-library entry",
+  "description": "One example in the fitting reference library: an artifact case, a fit exemplar, or a canonical template. Discriminated by 'kind'. See planning/ai-agent/04-reference-library-and-memory.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "entry_id", "kind", "provenance", "data", "descriptors", "quality", "meta"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "SemVer of this schema. Bump on any breaking change and write a migration."
+    },
+    "entry_id": {
+      "type": "string",
+      "description": "Stable, content-based ID (e.g. 'sha1:...'). Never reused for different data."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["artifact", "fit_exemplar", "canonical_template"]
+    },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["geometry", "q_units"],
+      "properties": {
+        "source_file": {"type": ["string", "null"]},
+        "source_nxentry": {"type": ["string", "null"]},
+        "instrument": {"type": ["string", "null"]},
+        "geometry": {
+          "type": "string",
+          "enum": ["slit_smeared", "desmeared", "pinhole_2d", "simulated", "unknown"],
+          "description": "MANDATORY. Primary driver of cross-instrument transferability."
+        },
+        "q_units": {"type": "string", "enum": ["1/angstrom", "1/nm"]},
+        "sample": {"type": ["string", "null"]},
+        "contrast_sld_diff": {"type": ["number", "null"]},
+        "date": {"type": ["string", "null"]},
+        "operator": {"type": ["string", "null"]}
+      }
+    },
+
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["curve_file", "q_min", "q_max", "n_points", "smeared"],
+      "properties": {
+        "curve_file": {"type": "string", "description": "Relative path, e.g. 'curve.csv' with columns q,I,dI,dQ."},
+        "q_min": {"type": "number"},
+        "q_max": {"type": "number"},
+        "n_points": {"type": "integer", "minimum": 2},
+        "decades_q": {"type": ["number", "null"]},
+        "smeared": {"type": "boolean"},
+        "has_dQ": {"type": ["boolean", "null"]}
+      }
+    },
+
+    "descriptors": {
+      "type": "object",
+      "description": "Model-agnostic fingerprint. Regenerable from the curve; versioned.",
+      "additionalProperties": false,
+      "required": ["descriptor_version"],
+      "properties": {
+        "descriptor_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "power_law_segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["q_lo", "q_hi", "slope"],
+            "properties": {
+              "q_lo": {"type": "number"},
+              "q_hi": {"type": "number"},
+              "slope": {"type": "number"},
+              "slope_sigma": {"type": ["number", "null"]},
+              "kind": {
+                "type": ["string", "null"],
+                "enum": ["porod_surface", "porod_smooth", "mass_fractal", "surface_fractal", "diffuse", "other", null]
+              }
+            }
+          }
+        },
+        "guinier_knees": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["q"],
+            "properties": {
+              "q": {"type": "number"},
+              "Rg_est": {"type": ["number", "null"]}
+            }
+          }
+        },
+        "n_knees": {"type": ["integer", "null"], "minimum": 0},
+        "porod_exponent_highq": {"type": ["number", "null"]},
+        "lowq_behavior": {
+          "type": ["string", "null"],
+          "enum": ["plateau", "power_law_upturn", "knee", "rising", null]
+        },
+        "highq_behavior": {
+          "type": ["string", "null"],
+          "enum": ["flat_background", "porod", "rising", null]
+        },
+        "oscillations": {"type": ["boolean", "null"]},
+        "structure_factor_peak": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present"],
+          "properties": {
+            "present": {"type": "boolean"},
+            "q": {"type": ["number", "null"]}
+          }
+        },
+        "dynamic_range_decades": {"type": ["number", "null"]},
+        "recommended_nlevels": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+
+    "quality": {
+      "type": "object",
+      "description": "By-eye knowledge. Present on every entry; the payload for kind=artifact.",
+      "additionalProperties": false,
+      "required": ["trusted_q_range", "artifacts"],
+      "properties": {
+        "trusted_q_range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["q_min", "q_max"],
+          "properties": {
+            "q_min": {"type": "number"},
+            "q_max": {"type": "number"}
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["q_lo", "q_hi", "type", "severity", "why", "action"],
+            "properties": {
+              "q_lo": {"type": "number"},
+              "q_hi": {"type": "number"},
+              "type": {
+                "type": "string",
+                "enum": [
+                  "poor_statistics", "beamstop_shadow", "desmear_artifact",
+                  "detector_deadzone", "negative_intensity", "cosmic_spike",
+                  "parasitic_scattering", "flux_normalization", "merge_mismatch",
+                  "oversubtracted_background", "other"
+                ]
+              },
+              "severity": {"type": "string", "enum": ["low", "medium", "high"]},
+              "why": {"type": "string"},
+              "action": {
+                "type": "string",
+                "enum": ["trim", "mask", "keep_with_caution", "desmear_issue", "reprocess"]
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "label": {
+      "type": ["object", "null"],
+      "description": "The answer. Required for fit_exemplar and canonical_template; null for artifact.",
+      "additionalProperties": false,
+      "required": ["tool", "config"],
+      "properties": {
+        "tool": {"type": "string", "enum": ["unified_fit", "size_distribution"]},
+        "config": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "nlevels": {"type": ["integer", "null"]},
+            "background": {"type": ["string", "null"], "enum": ["flat", "power_law", "complex", "none", null]},
+            "levels": {"type": ["array", "null"]},
+            "shape": {"type": ["string", "null"]},
+            "r_min": {"type": ["number", "null"]},
+            "r_max": {"type": ["number", "null"]}
+          }
+        },
+        "fit_quality": {
+          "type": ["object", "null"],
+          "additionalProperties": true,
+          "properties": {
+            "chi2_reduced": {"type": ["number", "null"]},
+            "notes": {"type": ["string", "null"]}
+          }
+        },
+        "fit_q_range": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "q_min": {"type": "number"},
+            "q_max": {"type": "number"}
+          }
+        }
+      }
+    },
+
+    "rationale": {
+      "type": ["object", "null"],
+      "description": "Transferable expert voice. Free text lives here, never in filterable fields.",
+      "additionalProperties": false,
+      "properties": {
+        "decision_cues": {"type": "array", "items": {"type": "string"}},
+        "expert_notes": {"type": ["string", "null"]},
+        "alternatives_considered": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+
+    "domain_context": {
+      "type": ["object", "null"],
+      "description": "Structured physics/chemistry facts and outside evidence that justify or constrain the modeling choice. Distinct from rationale (which is the reasoning); this is the evidence the reasoning rests on. All optional.",
+      "additionalProperties": false,
+      "properties": {
+        "known_composition": {"type": ["string", "null"], "description": "Chemistry/phases known independently, e.g. 'Cu-rich precipitates in bcc Fe matrix'."},
+        "sample_prep": {"type": ["string", "null"], "description": "Preparation/history relevant to structure, e.g. 'solution-treated then aged 500C/100h'."},
+        "expected_structure": {"type": ["string", "null"], "description": "What physics/chemistry leads you to expect before fitting, e.g. 'discrete spheroidal precipitates, 5-20 nm, plus dislocation-network upturn'."},
+        "complementary_data": {
+          "type": "array",
+          "description": "Evidence from other techniques that pins or checks the model.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["technique", "result"],
+            "properties": {
+              "technique": {"type": "string", "description": "e.g. TEM, SEM, DLS, XRD, SANS-contrast-variation."},
+              "result": {"type": "string"}
+            }
+          }
+        },
+        "references": {"type": "array", "items": {"type": "string"}, "description": "DOIs, citations, or internal report IDs."}
+      }
+    },
+
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label_confidence", "labeled_by", "split"],
+      "properties": {
+        "label_confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "labeled_by": {"type": "string"},
+        "labeled_date": {"type": ["string", "null"]},
+        "split": {"type": "string", "enum": ["train", "val", "holdout"]},
+        "tags": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"enum": ["fit_exemplar", "canonical_template"]}}},
+      "then": {"required": ["label"], "properties": {"label": {"type": "object"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "artifact"}}},
+      "then": {"properties": {"label": {"type": "null"}}}
+    }
+  ]
+}

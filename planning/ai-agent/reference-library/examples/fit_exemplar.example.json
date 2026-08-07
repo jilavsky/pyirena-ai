@@ -1,0 +1,101 @@
+{
+  "schema_version": "1.0.0",
+  "entry_id": "sha1:9f3c1a77e0b2d4c8a1f6e2b9d0c3a4571e8b2f60",
+  "kind": "fit_exemplar",
+
+  "provenance": {
+    "source_file": "/archive/2019/APS_9ID/steelX_00123.h5",
+    "source_nxentry": "sasentry1/sasdata1",
+    "instrument": "APS 9ID USAXS (Bonse-Hart)",
+    "geometry": "slit_smeared",
+    "q_units": "1/angstrom",
+    "sample": "precipitates in ferritic steel, aged 500C/100h",
+    "contrast_sld_diff": 6.1e-6,
+    "date": "2019-06-14",
+    "operator": "JI"
+  },
+
+  "data": {
+    "curve_file": "curve.csv",
+    "q_min": 1.0e-4,
+    "q_max": 0.3,
+    "n_points": 220,
+    "decades_q": 3.5,
+    "smeared": true,
+    "has_dQ": true
+  },
+
+  "descriptors": {
+    "descriptor_version": "1.0.0",
+    "power_law_segments": [
+      {"q_lo": 1.0e-4, "q_hi": 3.0e-4, "slope": -3.9, "slope_sigma": 0.1, "kind": "porod_surface"},
+      {"q_lo": 3.0e-4, "q_hi": 0.02, "slope": -2.1, "slope_sigma": 0.2, "kind": "mass_fractal"}
+    ],
+    "guinier_knees": [{"q": 0.004, "Rg_est": 90.0}],
+    "n_knees": 1,
+    "porod_exponent_highq": -4.0,
+    "lowq_behavior": "power_law_upturn",
+    "highq_behavior": "flat_background",
+    "oscillations": false,
+    "structure_factor_peak": {"present": false, "q": null},
+    "dynamic_range_decades": 6.2,
+    "recommended_nlevels": 2
+  },
+
+  "quality": {
+    "trusted_q_range": {"q_min": 2.0e-4, "q_max": 0.25},
+    "artifacts": [
+      {
+        "q_lo": 0.25,
+        "q_hi": 0.3,
+        "type": "poor_statistics",
+        "severity": "high",
+        "why": "counting-limited high-Q tail sits below the flat background and is pure noise",
+        "action": "trim"
+      }
+    ]
+  },
+
+  "label": {
+    "tool": "unified_fit",
+    "config": {
+      "nlevels": 2,
+      "background": "flat",
+      "levels": [
+        {"Rg": 90, "G": 1200, "P": 4.0, "B": 3.0e-9, "correlations": false},
+        {"Rg": 900, "G": null, "P": 2.1, "B": 5.0e-6}
+      ]
+    },
+    "fit_quality": {"chi2_reduced": 1.8, "notes": "residuals flat except the trimmed tail"},
+    "fit_q_range": {"q_min": 2.0e-4, "q_max": 0.25}
+  },
+
+  "rationale": {
+    "decision_cues": [
+      "single Guinier knee at 0.004, no oscillation -> one discrete precipitate population",
+      "Porod -4 at high Q -> sharp precipitate/matrix interfaces",
+      "low-Q -2.1 upturn -> large-scale mass-fractal aggregation, modeled as a power-law level"
+    ],
+    "expert_notes": "Classic two-level: a discrete precipitate population riding on an aggregate upturn. Did NOT use a size distribution because the knee is sharp/discrete rather than a broad continuum.",
+    "alternatives_considered": ["size_distribution (rejected: knee too sharp for a broad P(r))"]
+  },
+
+  "domain_context": {
+    "known_composition": "Cu- and Ni-rich precipitates in a bcc Fe matrix",
+    "sample_prep": "solution-treated 850C, then aged 500C for 100h",
+    "expected_structure": "discrete near-spherical precipitates ~10-20 nm on a dislocation-network / aggregate upturn",
+    "complementary_data": [
+      {"technique": "APT", "result": "precipitate radius 8-12 nm, number density 1e23 /m^3"},
+      {"technique": "TEM", "result": "roughly spherical precipitates, no faceting resolved"}
+    ],
+    "references": ["10.1107/example-doi", "internal-report-2019-steelX"]
+  },
+
+  "meta": {
+    "label_confidence": "high",
+    "labeled_by": "JI",
+    "labeled_date": "2026-08-01",
+    "split": "train",
+    "tags": ["steel", "precipitates", "USAXS", "two-level"]
+  }
+}

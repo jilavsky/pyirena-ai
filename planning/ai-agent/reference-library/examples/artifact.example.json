@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0.0",
+  "entry_id": "sha1:2b7d0f19c4a6e8103f5b9d2c7a1e4068b3c5d9f2",
+  "kind": "artifact",
+
+  "provenance": {
+    "source_file": "/archive/2021/APS_9ID/silica_desmear_bad_00457.h5",
+    "source_nxentry": "sasentry1/sasdata1",
+    "instrument": "APS 9ID USAXS (Bonse-Hart)",
+    "geometry": "desmeared",
+    "q_units": "1/angstrom",
+    "sample": "dilute silica standard, desmearing over-iterated",
+    "contrast_sld_diff": null,
+    "date": "2021-03-02",
+    "operator": "JI"
+  },
+
+  "data": {
+    "curve_file": "curve.csv",
+    "q_min": 1.2e-4,
+    "q_max": 0.28,
+    "n_points": 210,
+    "decades_q": 3.4,
+    "smeared": false,
+    "has_dQ": true
+  },
+
+  "descriptors": {
+    "descriptor_version": "1.0.0",
+    "power_law_segments": [
+      {"q_lo": 1.2e-4, "q_hi": 8.0e-4, "slope": -4.0, "slope_sigma": 0.1, "kind": "porod_surface"}
+    ],
+    "guinier_knees": [{"q": 0.006, "Rg_est": 60.0}],
+    "n_knees": 1,
+    "porod_exponent_highq": -4.0,
+    "lowq_behavior": "power_law_upturn",
+    "highq_behavior": "flat_background",
+    "oscillations": false,
+    "structure_factor_peak": {"present": false, "q": null},
+    "dynamic_range_decades": 5.8,
+    "recommended_nlevels": 1
+  },
+
+  "quality": {
+    "trusted_q_range": {"q_min": 1.2e-4, "q_max": 0.05},
+    "artifacts": [
+      {
+        "q_lo": 0.01,
+        "q_hi": 0.03,
+        "type": "desmear_artifact",
+        "severity": "high",
+        "why": "over-iterated desmearing injects a spurious oscillation/ringing around the Guinier knee that mimics a monodisperse form-factor minimum; it is NOT physical structure",
+        "action": "reprocess"
+      },
+      {
+        "q_lo": 0.05,
+        "q_hi": 0.28,
+        "type": "poor_statistics",
+        "severity": "medium",
+        "why": "high-Q noise below the flat background after desmearing amplified the scatter",
+        "action": "trim"
+      }
+    ]
+  },
+
+  "label": null,
+
+  "rationale": {
+    "decision_cues": [
+      "ringing appears ONLY after desmearing and is absent in the slit-smeared parent curve -> reduction artifact, not sample",
+      "a real monodisperse minimum would persist across reduction and match a form-factor position"
+    ],
+    "expert_notes": "Teaching case: an agent that trusts the ringing would over-fit a spurious monodisperse population or add an unjustified Unified level. The tell is that the feature is created by the desmearing step. Compare against the smeared parent before modeling.",
+    "alternatives_considered": []
+  },
+
+  "meta": {
+    "label_confidence": "high",
+    "labeled_by": "JI",
+    "labeled_date": "2026-08-01",
+    "split": "holdout",
+    "tags": ["artifact", "desmearing", "ringing", "silica", "USAXS"]
+  }
+}
